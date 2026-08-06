@@ -5,8 +5,8 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 version=$(cd "$project_dir" && node -p "require('./package.json').version")
-install_path=/Applications/InviewPractice.app
-staging_path="$project_dir/release/mac-arm64/InviewPractice.app"
+install_path='/Applications/Alfred AI.app'
+staging_path="$project_dir/release/mac-arm64/Alfred AI.app"
 bundle_id=com.atlax.inview-practice
 
 if [ ! -d "$install_path" ]; then

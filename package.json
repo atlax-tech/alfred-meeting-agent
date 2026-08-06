@@ -1,7 +1,7 @@
 {
-  "name": "inview-do",
-  "version": "0.2.18",
-  "description": "AI Mentor — 个人 AI 教练工具,用于知识学习与表达训练",
+  "name": "alfred-ai",
+  "version": "0.2.19",
+  "description": "Alfred AI — 基于个人知识库、个人背景和会议信息提供实时题词与笔记辅助的自用工作会议助手",
   "main": "out/main/index.js",
   "author": "research",
   "license": "MIT",
@@ -21,7 +21,7 @@
   },
   "build": {
     "appId": "com.atlax.inview-practice",
-    "productName": "InviewPractice",
+    "productName": "Alfred AI",
     "mac": {
       "category": "public.app-category.developer-tools",
       "target": [
@@ -29,9 +29,9 @@
       ],
       "identity": null,
       "extendInfo": {
-        "NSAudioCaptureUsageDescription": "用于练习时捕获系统音频以进行语音识别(仅本地处理,不上传原始音频)",
-        "NSMicrophoneUsageDescription": "用于练习时通过麦克风进行语音识别",
-        "NSScreenCaptureUsageDescription": "用于练习时捕获系统音频(对方说话内容)"
+        "NSAudioCaptureUsageDescription": "用于会议中捕获系统音频以进行语音识别(仅本地处理,不上传原始音频)",
+        "NSMicrophoneUsageDescription": "用于会议中通过麦克风进行语音识别",
+        "NSScreenCaptureUsageDescription": "用于会议中捕获系统音频(对方说话内容)"
       }
     },
     "directories": {

@@ -5,9 +5,9 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 release_dir="$project_dir/release"
-app_path="$release_dir/mac-arm64/InviewPractice.app"
+app_path="$release_dir/mac-arm64/Alfred AI.app"
 version=$(cd "$project_dir" && node -p "require('./package.json').version")
-archive_path="$release_dir/InviewPractice-$version-mac-arm64.zip"
+archive_path="$release_dir/Alfred-AI-$version-mac-arm64.zip"
 lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 verify_dir=''
 
@@ -40,10 +40,10 @@ fi
 
 verify_dir=$(/usr/bin/mktemp -d /private/tmp/inview-package-verify.XXXXXX)
 /usr/bin/ditto -x -k "$archive_path" "$verify_dir"
-/usr/bin/codesign --verify --deep --strict "$verify_dir/InviewPractice.app"
+/usr/bin/codesign --verify --deep --strict "$verify_dir/Alfred AI.app"
 
-archive_bundle_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$verify_dir/InviewPractice.app/Contents/Info.plist")
-archive_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$verify_dir/InviewPractice.app/Contents/Info.plist")
+archive_bundle_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$verify_dir/Alfred AI.app/Contents/Info.plist")
+archive_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$verify_dir/Alfred AI.app/Contents/Info.plist")
 
 if [ "$archive_bundle_id" != 'com.atlax.inview-practice' ]; then
   echo "Unexpected bundle identifier in archive: $archive_bundle_id" >&2
@@ -59,7 +59,8 @@ fi
 # after the replacement archive has passed integrity, signature, bundle ID,
 # and version checks.
 /usr/bin/find "$release_dir" -maxdepth 1 -type f \
-  -name 'InviewPractice-*-mac-arm64.zip' ! -path "$archive_path" \
+  \( -name 'Alfred-AI-*-mac-arm64.zip' -o -name 'InviewPractice-*-mac-arm64.zip' \) \
+  ! -path "$archive_path" \
   -exec /bin/rm -f -- {} +
 
 if [ -x "$lsregister" ]; then

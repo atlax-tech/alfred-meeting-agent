@@ -286,7 +286,7 @@ function MainApp() {
               status === 'listening' ? 'pulse-ok' : ''
             }`}
           />
-          <span className="text-xs font-semibold tracking-wide text-slate-100">AI Mentor</span>
+          <span className="text-xs font-semibold tracking-wide text-slate-100">Alfred AI</span>
         </div>
 
         <button

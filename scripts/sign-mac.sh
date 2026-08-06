@@ -26,7 +26,7 @@ if [ "${1:-}" = "--check" ]; then
   exit 0
 fi
 
-app_path="${1:-release/mac-arm64/InviewPractice.app}"
+app_path="${1:-release/mac-arm64/Alfred AI.app}"
 
 if [ ! -d "$app_path" ]; then
   echo "App bundle not found: $app_path" >&2

@@ -1,0 +1,87 @@
+{
+  "name": "inview-do",
+  "version": "0.2.18",
+  "description": "AI Mentor — 个人 AI 教练工具,用于知识学习与表达训练",
+  "main": "out/main/index.js",
+  "author": "research",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit -p tsconfig.node.json && vite build",
+    "build:electron": "sh scripts/build-mouse-idle.sh && sh scripts/build-vision-ocr.sh && sh scripts/build-liquid-glass.sh && electron-vite build",
+    "dev:electron": "sh scripts/build-mouse-idle.sh && sh scripts/build-vision-ocr.sh && sh scripts/build-liquid-glass.sh && electron-vite dev",
+    "start": "electron-vite preview",
+    "preview": "electron-vite preview",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
+    "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "pack:mac": "sh scripts/package-mac.sh",
+    "install:mac": "sh scripts/install-mac.sh",
+    "verify:mac-install": "sh scripts/verify-mac-install.sh"
+  },
+  "build": {
+    "appId": "com.atlax.inview-practice",
+    "productName": "InviewPractice",
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dir"
+      ],
+      "identity": null,
+      "extendInfo": {
+        "NSAudioCaptureUsageDescription": "用于练习时捕获系统音频以进行语音识别(仅本地处理,不上传原始音频)",
+        "NSMicrophoneUsageDescription": "用于练习时通过麦克风进行语音识别",
+        "NSScreenCaptureUsageDescription": "用于练习时捕获系统音频(对方说话内容)"
+      }
+    },
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/native/mouse-idle",
+        "to": "native/mouse-idle"
+      },
+      {
+        "from": "build/native/vision-ocr",
+        "to": "native/vision-ocr"
+      },
+      {
+        "from": "build/native/liquid-glass.node",
+        "to": "native/liquid-glass.node"
+      }
+    ]
+  },
+  "dependencies": {
+    "@tesseract.js-data/chi_sim": "^1.0.0",
+    "@tesseract.js-data/eng": "^1.0.0",
+    "electron-audio-loopback": "^1.0.6",
+    "mammoth": "^1.12.0",
+    "pdf-parse": "^2.4.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "tesseract.js": "^7.0.0",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^3.1.0",
+    "postcss": "^8.4.39",
+    "tailwindcss": "^3.4.6",
+    "typescript": "^5.5.3",
+    "vite": "^5.3.4"
+  }
+}

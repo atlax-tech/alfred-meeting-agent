@@ -1,0 +1,247 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color-scheme: light;
+}
+
+html,
+body {
+  background: transparent;
+}
+
+.bubble-drag {
+  -webkit-app-region: drag;
+}
+
+.bubble-no-drag,
+button,
+input,
+select,
+textarea,
+summary,
+a {
+  -webkit-app-region: no-drag;
+}
+
+/* 自定义滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.28);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.44);
+}
+
+::selection {
+  background: rgba(10, 132, 255, 0.18);
+  color: #172033;
+}
+
+/*
+ * Light liquid-glass foundation. The native macOS vibrancy supplied by the
+ * BrowserWindow remains visible through these translucent renderer surfaces.
+ */
+.app-glass {
+  background-image:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.16), rgba(194, 207, 219, 0.04)),
+    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.22), transparent 34%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.62),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.14),
+    0 22px 64px rgba(45, 55, 72, 0.16),
+    0 3px 14px rgba(45, 55, 72, 0.07);
+  -webkit-backdrop-filter: blur(42px) saturate(1.4) brightness(1.04);
+  backdrop-filter: blur(42px) saturate(1.4) brightness(1.04);
+}
+
+[class*='bg-bg-panel'] {
+  -webkit-backdrop-filter: blur(36px) saturate(1.28) brightness(1.03);
+  backdrop-filter: blur(36px) saturate(1.28) brightness(1.03);
+}
+
+/* Neutral hover labels must stay graphite on light surfaces. */
+.hover\:text-white:hover {
+  color: #172033;
+}
+
+/* 状态指示动画 */
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(34, 197, 94, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+  }
+}
+.pulse-ok {
+  animation: pulse-ring 1.6s infinite;
+}
+
+/* AI 输出统一使用安全的 CommonMark + GFM 渲染。 */
+.markdown-content {
+  overflow-wrap: anywhere;
+}
+
+.markdown-content > :first-child {
+  margin-top: 0;
+}
+
+.markdown-content > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4 {
+  margin: 1em 0 0.45em;
+  color: #172033;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.markdown-content h1 {
+  font-size: 1.3em;
+}
+
+.markdown-content h2 {
+  font-size: 1.18em;
+}
+
+.markdown-content h3,
+.markdown-content h4 {
+  font-size: 1.05em;
+}
+
+.markdown-content p {
+  margin: 0.55em 0;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  margin: 0.55em 0;
+  padding-left: 1.45em;
+}
+
+.markdown-content ul {
+  list-style: disc;
+}
+
+.markdown-content ol {
+  list-style: decimal;
+}
+
+.markdown-content li {
+  margin: 0.2em 0;
+}
+
+.markdown-content li > p {
+  margin: 0.15em 0;
+}
+
+.markdown-content blockquote {
+  margin: 0.65em 0;
+  border-left: 3px solid rgba(10, 132, 255, 0.42);
+  padding-left: 0.8em;
+  color: #526074;
+}
+
+.markdown-content code {
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  border-radius: 0.3rem;
+  background: rgba(241, 245, 249, 0.82);
+  padding: 0.08em 0.3em;
+  color: #005fb8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.88em;
+}
+
+.markdown-content pre {
+  margin: 0.7em 0;
+  overflow-x: auto;
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  border-radius: 0.5rem;
+  background: rgba(241, 245, 249, 0.9);
+  padding: 0.75rem;
+  line-height: 1.55;
+}
+
+.markdown-content pre code {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: #273449;
+  font-size: 0.86em;
+}
+
+.markdown-content a {
+  color: #0071e3;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.markdown-content hr {
+  margin: 0.9em 0;
+  border: 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.38);
+}
+
+.markdown-content table {
+  width: 100%;
+  margin: 0.7em 0;
+  border-collapse: collapse;
+  font-size: 0.9em;
+}
+
+.markdown-content th,
+.markdown-content td {
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  padding: 0.4em 0.55em;
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-content th {
+  background: rgba(241, 245, 249, 0.86);
+  color: #172033;
+  font-weight: 600;
+}
+
+.markdown-content img {
+  max-width: 100%;
+  height: auto;
+  margin: 0.7em 0;
+  border-radius: 0.5rem;
+}
+
+.markdown-content input[type='checkbox'] {
+  margin-right: 0.4em;
+  accent-color: #0a84ff;
+}
+
+.markdown-content[data-compact='true'] p,
+.markdown-content[data-compact='true'] ul,
+.markdown-content[data-compact='true'] ol,
+.markdown-content[data-compact='true'] pre,
+.markdown-content[data-compact='true'] table {
+  margin-top: 0.35em;
+  margin-bottom: 0.35em;
+}

@@ -5,13 +5,15 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 version=$(cd "$project_dir" && node -p "require('./package.json').version")
-archive_path=${1:-"$project_dir/release/InviewPractice-$version-mac-arm64.zip"}
-install_path=/Applications/InviewPractice.app
+archive_path=${1:-"$project_dir/release/Alfred-AI-$version-mac-arm64.zip"}
+install_path='/Applications/Alfred AI.app'
+legacy_install_path=/Applications/InviewPractice.app
 lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 extract_dir=''
 backup_dir=''
 had_previous=0
 rollback_required=0
+previous_install_path=''
 
 validate_app() {
   candidate_path=$1
@@ -42,8 +44,8 @@ cleanup() {
   if [ "$rollback_required" -eq 1 ]; then
     echo "Installation failed; restoring the previous app." >&2
     /bin/rm -rf "$install_path"
-    if [ "$had_previous" -eq 1 ] && [ -d "$backup_dir/InviewPractice.app" ]; then
-      /bin/mv "$backup_dir/InviewPractice.app" "$install_path"
+    if [ "$had_previous" -eq 1 ] && [ -d "$backup_dir/previous.app" ]; then
+      /bin/mv "$backup_dir/previous.app" "$previous_install_path"
     fi
   fi
 
@@ -67,34 +69,51 @@ fi
 extract_dir=$(/usr/bin/mktemp -d /private/tmp/inview-install.XXXXXX)
 backup_dir=$(/usr/bin/mktemp -d /private/tmp/inview-install-backup.XXXXXX)
 /usr/bin/ditto -x -k "$archive_path" "$extract_dir"
-source_app="$extract_dir/InviewPractice.app"
+source_app="$extract_dir/Alfred AI.app"
 validate_app "$source_app" "$version"
 
-if /usr/bin/pgrep -x InviewPractice >/dev/null 2>&1; then
-  /usr/bin/pkill -TERM -x InviewPractice || true
+if /usr/bin/pgrep -x 'Alfred AI' >/dev/null 2>&1; then
+  /usr/bin/pkill -TERM -x 'Alfred AI' || true
   attempts=0
-  while /usr/bin/pgrep -x InviewPractice >/dev/null 2>&1 && [ "$attempts" -lt 20 ]; do
+  while /usr/bin/pgrep -x 'Alfred AI' >/dev/null 2>&1 && [ "$attempts" -lt 20 ]; do
     /bin/sleep 0.25
     attempts=$((attempts + 1))
   done
 
-  if /usr/bin/pgrep -x InviewPractice >/dev/null 2>&1; then
-    /usr/bin/pkill -KILL -x InviewPractice || true
+  if /usr/bin/pgrep -x 'Alfred AI' >/dev/null 2>&1; then
+    /usr/bin/pkill -KILL -x 'Alfred AI' || true
   fi
+fi
+
+if /usr/bin/pgrep -x InviewPractice >/dev/null 2>&1; then
+  /usr/bin/pkill -TERM -x InviewPractice || true
+fi
+
+if [ -d "$install_path" ] && [ -d "$legacy_install_path" ]; then
+  echo "Both current and legacy app paths exist; refusing an ambiguous upgrade." >&2
+  exit 1
 fi
 
 if [ -d "$install_path" ]; then
   had_previous=1
+  previous_install_path=$install_path
   if [ -x "$lsregister" ]; then
     "$lsregister" -u "$install_path" >/dev/null 2>&1 || true
   fi
-  /bin/mv "$install_path" "$backup_dir/InviewPractice.app"
+  /bin/mv "$install_path" "$backup_dir/previous.app"
+elif [ -d "$legacy_install_path" ]; then
+  had_previous=1
+  previous_install_path=$legacy_install_path
+  if [ -x "$lsregister" ]; then
+    "$lsregister" -u "$legacy_install_path" >/dev/null 2>&1 || true
+  fi
+  /bin/mv "$legacy_install_path" "$backup_dir/previous.app"
 fi
 
 rollback_required=1
 /usr/bin/ditto "$source_app" "$install_path"
 validate_app "$install_path" "$version"
-/usr/bin/cmp "$source_app/Contents/MacOS/InviewPractice" "$install_path/Contents/MacOS/InviewPractice"
+/usr/bin/cmp "$source_app/Contents/MacOS/Alfred AI" "$install_path/Contents/MacOS/Alfred AI"
 /usr/bin/cmp "$source_app/Contents/Resources/app.asar" "$install_path/Contents/Resources/app.asar"
 
 if [ -x "$lsregister" ]; then
@@ -106,4 +125,4 @@ rollback_required=0
 backup_dir=''
 
 sh "$script_dir/verify-mac-install.sh"
-echo "Installed and verified InviewPractice $version at $install_path"
+echo "Installed and verified Alfred AI $version at $install_path"

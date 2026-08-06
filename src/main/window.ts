@@ -53,7 +53,7 @@ export function createMainWindow(opts: CreateWindowOptions): BrowserWindow {
     opacity: 0.98,
     skipTaskbar: false,
     backgroundColor: '#00000000',
-    title: 'InviewPractice',
+    title: 'Alfred AI',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,

@@ -597,7 +597,7 @@ async function capturePrimaryDisplay(rect?: MentorRegionRect): Promise<MentorCap
         : 'unknown'
     if (permission !== 'granted') {
       throw new Error(
-        '需要屏幕录制权限。请在“系统设置 → 隐私与安全性 → 录屏与系统录音”中允许 InviewPractice，然后重启应用。'
+        '需要屏幕录制权限。请在“系统设置 → 隐私与安全性 → 录屏与系统录音”中允许 Alfred AI，然后重启应用。'
       )
     }
     throw new Error('未能读取主显示器图像，请重试。')

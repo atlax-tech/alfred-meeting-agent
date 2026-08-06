@@ -303,16 +303,16 @@ type: note
 area: 工作
 created: ${exported.date}
 updated: ${exported.date}
-tags: [会议, InviewPractice]
+tags: [会议, Alfred AI]
 status: active
-sources: [${yamlString(`InviewPractice 会议助手 ${exported.date}`)}]
+sources: [${yamlString(`Alfred AI 会议助手 ${exported.date}`)}]
 record_properties: [${recordProperties.join(', ')}]
 session_id: ${yamlString(payload.sessionId)}
 session_started_at: ${yamlString(new Date(payload.sessionStartedAt).toISOString())}
 ---`
   const intro = `# ${payload.title}
 
-这是一份由 InviewPractice 会议助手按用户选择生成的会议记录。只收录用户明确加入笔记的内容；如本轮使用了会前预置，完整资料一并保存在文末。`
+这是一份由 Alfred AI 会议助手按用户选择生成的会议记录。只收录用户明确加入笔记的内容；如本轮使用了会前预置，完整资料一并保存在文末。`
   const entries = payload.entries
     .map((entry, index) => entryMarkdown(entry, index))
     .join('\n\n')

@@ -1,5 +1,13 @@
 # Repository Guidelines
 
+## Product Identity
+
+- The project and product name is `Alfred AI`. Do not introduce alternative user-facing names.
+- Alfred AI is a personal, non-commercial work meeting assistant with meeting prompter capabilities.
+- It uses the user's personal knowledge base, background, and supplied meeting information to provide timely prompts and reduce manual note-taking or cue-card preparation.
+- Preserve the legacy bundle ID `com.atlax.inview-practice`, preload API names, storage keys, and signing identity unless an explicit migration is authorized; these are compatibility identifiers, not product names.
+- Naming-only work must not change meeting, prompting, note, knowledge-base, personalization, OCR, STT, LLM, stealth, or other business behavior.
+
 ## Project Structure & Module Organization
 
 - `src/main/`: Electron lifecycle, windows, tray, IPC handlers, screen capture, and stealth behavior.
@@ -48,7 +56,7 @@ Never commit API keys, credentials, or local proxy settings. Preserve `contextIs
 - Run `npm run pack:mac` with elevated execution after explaining that it only uses the code-signing identity and does not read password items. Never recreate, import, trust, or delete a certificate without explicit user authorization.
 - Do not run `electron-builder --mac --dir` as the final packaging command. Its intermediate output is Electron ad-hoc signed; only `npm run pack:mac` produces the fixed designated requirement.
 - `npm run pack:mac` checks identity visibility before building so a denied keychain boundary cannot overwrite the existing release with an unsigned/ad-hoc package.
-- The durable release artifact is `release/InviewPractice-<version>-mac-arm64.zip`. `release/mac-arm64/InviewPractice.app` is staging only and must be removed after the ZIP passes extraction and signature checks.
+- The durable release artifact is `release/Alfred-AI-<version>-mac-arm64.zip`. `release/mac-arm64/Alfred AI.app` is staging only and must be removed after the ZIP passes extraction and signature checks.
 
 ## 安装与调试
 
@@ -58,4 +66,4 @@ Never commit API keys, credentials, or local proxy settings. Preserve `contextIs
 4. 检查系统中是否只保留最新版本的App，如果不是则需要删除旧安装只保留最新的安装
 5. 调试最新的安装版本，确保没有权限方面的问题。
 
-“只保留最新版本”表示磁盘上只能存在一个 Bundle ID 为 `com.atlax.inview-practice` 的可运行 `.app`，其路径必须是 `/Applications/InviewPractice.app`。ZIP 安装包不计为可运行副本。不要仅检查 `/Applications`；必须执行 `npm run verify:mac-install`，同时检查用户目录、构建目录和 Spotlight 可见副本。
+“只保留最新版本”表示磁盘上只能存在一个 Bundle ID 为 `com.atlax.inview-practice` 的可运行 `.app`，其路径必须是 `/Applications/Alfred AI.app`。ZIP 安装包不计为可运行副本。不要仅检查 `/Applications`；必须执行 `npm run verify:mac-install`，同时检查用户目录、构建目录和 Spotlight 可见副本。

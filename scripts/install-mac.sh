@@ -11,13 +11,12 @@ legacy_install_path=/Applications/InviewPractice.app
 lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 extract_dir=''
 backup_dir=''
-had_previous=0
+had_current_previous=0
+had_legacy_previous=0
 rollback_required=0
-previous_install_path=''
 
-validate_app() {
+validate_bundle_identity() {
   candidate_path=$1
-  expected_version=$2
 
   if [ ! -d "$candidate_path" ]; then
     echo "App bundle not found: $candidate_path" >&2
@@ -25,12 +24,18 @@ validate_app() {
   fi
 
   candidate_bundle_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$candidate_path/Contents/Info.plist")
-  candidate_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$candidate_path/Contents/Info.plist")
-
   if [ "$candidate_bundle_id" != 'com.atlax.inview-practice' ]; then
     echo "Unexpected bundle identifier: $candidate_bundle_id" >&2
     return 1
   fi
+}
+
+validate_app() {
+  candidate_path=$1
+  expected_version=$2
+
+  validate_bundle_identity "$candidate_path"
+  candidate_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$candidate_path/Contents/Info.plist")
 
   if [ "$candidate_version" != "$expected_version" ]; then
     echo "Unexpected app version: $candidate_version (expected $expected_version)" >&2
@@ -44,8 +49,11 @@ cleanup() {
   if [ "$rollback_required" -eq 1 ]; then
     echo "Installation failed; restoring the previous app." >&2
     /bin/rm -rf "$install_path"
-    if [ "$had_previous" -eq 1 ] && [ -d "$backup_dir/previous.app" ]; then
-      /bin/mv "$backup_dir/previous.app" "$previous_install_path"
+    if [ "$had_current_previous" -eq 1 ] && [ -d "$backup_dir/current.app" ]; then
+      /bin/mv "$backup_dir/current.app" "$install_path"
+    fi
+    if [ "$had_legacy_previous" -eq 1 ] && [ -d "$backup_dir/legacy.app" ]; then
+      /bin/mv "$backup_dir/legacy.app" "$legacy_install_path"
     fi
   fi
 
@@ -71,6 +79,7 @@ backup_dir=$(/usr/bin/mktemp -d /private/tmp/inview-install-backup.XXXXXX)
 /usr/bin/ditto -x -k "$archive_path" "$extract_dir"
 source_app="$extract_dir/Alfred AI.app"
 validate_app "$source_app" "$version"
+rollback_required=1
 
 if /usr/bin/pgrep -x 'Alfred AI' >/dev/null 2>&1; then
   /usr/bin/pkill -TERM -x 'Alfred AI' || true
@@ -89,28 +98,24 @@ if /usr/bin/pgrep -x InviewPractice >/dev/null 2>&1; then
   /usr/bin/pkill -TERM -x InviewPractice || true
 fi
 
-if [ -d "$install_path" ] && [ -d "$legacy_install_path" ]; then
-  echo "Both current and legacy app paths exist; refusing an ambiguous upgrade." >&2
-  exit 1
-fi
-
 if [ -d "$install_path" ]; then
-  had_previous=1
-  previous_install_path=$install_path
+  validate_bundle_identity "$install_path"
+  had_current_previous=1
   if [ -x "$lsregister" ]; then
     "$lsregister" -u "$install_path" >/dev/null 2>&1 || true
   fi
-  /bin/mv "$install_path" "$backup_dir/previous.app"
-elif [ -d "$legacy_install_path" ]; then
-  had_previous=1
-  previous_install_path=$legacy_install_path
+  /bin/mv "$install_path" "$backup_dir/current.app"
+fi
+
+if [ -d "$legacy_install_path" ]; then
+  validate_bundle_identity "$legacy_install_path"
+  had_legacy_previous=1
   if [ -x "$lsregister" ]; then
     "$lsregister" -u "$legacy_install_path" >/dev/null 2>&1 || true
   fi
-  /bin/mv "$legacy_install_path" "$backup_dir/previous.app"
+  /bin/mv "$legacy_install_path" "$backup_dir/legacy.app"
 fi
 
-rollback_required=1
 /usr/bin/ditto "$source_app" "$install_path"
 validate_app "$install_path" "$version"
 /usr/bin/cmp "$source_app/Contents/MacOS/Alfred AI" "$install_path/Contents/MacOS/Alfred AI"

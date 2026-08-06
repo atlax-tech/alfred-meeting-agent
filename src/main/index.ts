@@ -3,6 +3,7 @@
  */
 
 import { app, BrowserWindow, session } from 'electron'
+import { join } from 'path'
 // electron-audio-loopback: 在 macOS 上捕获系统音频的正确方案
 // 它通过 setDisplayMediaRequestHandler + CoreAudio Tap API 实现
 // forceCoreAudioTap: true 绕过某些 macOS 版本的 bug
@@ -12,6 +13,10 @@ import { registerIpcHandlers } from './ipc-handlers'
 import { loadConfig } from './config'
 import { registerMentorShortcut, unregisterMentorShortcut } from './mentor'
 import { createTray, destroyTray, showMainWindow } from './tray'
+
+// Preserve the existing profile directory across the product rename so the
+// user's config, personalization, localStorage, and session data remain intact.
+app.setPath('userData', join(app.getPath('appData'), 'inview-do'))
 
 // 初始化音频 loopback(必须在 app ready 之前调用)
 initAudioLoopback({

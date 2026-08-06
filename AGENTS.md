@@ -5,7 +5,7 @@
 - The project and product name is `Alfred AI`. Do not introduce alternative user-facing names.
 - Alfred AI is a personal, non-commercial work meeting assistant with meeting prompter capabilities.
 - It uses the user's personal knowledge base, background, and supplied meeting information to provide timely prompts and reduce manual note-taking or cue-card preparation.
-- Preserve the legacy bundle ID `com.atlax.inview-practice`, preload API names, storage keys, and signing identity unless an explicit migration is authorized; these are compatibility identifiers, not product names.
+- Preserve the legacy bundle ID `com.atlax.inview-practice`, user-data directory `inview-do`, preload API names, storage keys, and signing identity unless an explicit migration is authorized; these are compatibility identifiers, not product names.
 - Naming-only work must not change meeting, prompting, note, knowledge-base, personalization, OCR, STT, LLM, stealth, or other business behavior.
 
 ## Project Structure & Module Organization

@@ -13,7 +13,12 @@
  *  - 思维链先输出,最终答案后输出
  */
 
-import type { DetectedLanguage, LLMConfig, Region } from '@shared/types'
+import type {
+  DetectedLanguage,
+  LLMCallPerformance,
+  LLMConfig,
+  Region
+} from '@shared/types'
 
 export type ResponseLanguage = Exclude<Region, 'mixed'> | DetectedLanguage
 
@@ -40,6 +45,24 @@ export interface ChatOptions {
   responseLanguage?: ResponseLanguage
   /** 为特定短任务收紧输出长度，不影响设置中的全局上限 */
   maxTokensOverride?: number
+  /** 用于模型路由和本地性能记录。 */
+  task?: LLMCallPerformance['task']
+  metricsCallback?: (metrics: LLMCallPerformance) => void
+}
+
+export function configForTask(
+  config: LLMConfig,
+  task: LLMCallPerformance['task'] = 'answer'
+): LLMConfig {
+  const routedModel =
+    task === 'extract' || task === 'compression' || task === 'translation'
+      ? config.fastModel?.trim()
+      : task === 'review'
+        ? config.reviewModel?.trim()
+        : task === 'offline'
+          ? config.offlineModel?.trim()
+          : ''
+  return routedModel ? { ...config, model: routedModel } : config
 }
 
 export function getResponseLanguageMeta(language: ResponseLanguage): DetectedLanguage {
@@ -138,19 +161,43 @@ export async function chatStream(
   signal?: AbortSignal,
   options?: ChatOptions
 ): Promise<void> {
-  if (!config.apiKey) {
+  const task = options?.task ?? 'answer'
+  const requestConfig = configForTask(config, task)
+  const startedAt = performance.now()
+  let firstTokenAt: number | undefined
+  let usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } = {}
+  let metricsSent = false
+  const emitMetrics = (): void => {
+    if (metricsSent) return
+    metricsSent = true
+    options?.metricsCallback?.({
+      task,
+      model: requestConfig.model,
+      durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      timeToFirstTokenMs:
+        firstTokenAt === undefined
+          ? undefined
+          : Math.max(0, Math.round(firstTokenAt - startedAt)),
+      promptTokens: usage.prompt_tokens,
+      completionTokens: usage.completion_tokens,
+      totalTokens: usage.total_tokens
+    })
+  }
+  if (!requestConfig.apiKey) {
     cb.onError?.(new Error('未配置 LLM API Key,请到设置面板填写'))
+    emitMetrics()
     return
   }
-  if (!config.baseURL) {
+  if (!requestConfig.baseURL) {
     cb.onError?.(new Error('未配置 LLM baseURL'))
+    emitMetrics()
     return
   }
 
   // DeepSeek 同时支持 https://api.deepseek.com 和 https://api.deepseek.com/v1
   // 统一拼接 /chat/completions
-  const url = `${config.baseURL.replace(/\/$/, '')}/chat/completions`
-  const body = buildBody(config, messages, options)
+  const url = `${requestConfig.baseURL.replace(/\/$/, '')}/chat/completions`
+  const body = buildBody(requestConfig, messages, options)
 
   let response: Response
   try {
@@ -158,24 +205,27 @@ export async function chatStream(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.apiKey}`
+        Authorization: `Bearer ${requestConfig.apiKey}`
       },
       body: JSON.stringify(body),
       signal
     })
   } catch (err) {
     cb.onError?.(new Error(`LLM 请求失败: ${(err as Error).message}`))
+    emitMetrics()
     return
   }
 
   if (!response.ok) {
     const text = await response.text().catch(() => '')
     cb.onError?.(new Error(`LLM HTTP ${response.status}: ${text.slice(0, 300)}`))
+    emitMetrics()
     return
   }
 
   if (!response.body) {
     cb.onError?.(new Error('LLM 响应无 body'))
+    emitMetrics()
     return
   }
 
@@ -202,10 +252,14 @@ export async function chatStream(
         const data = trimmed.slice(5).trim()
         if (data === '[DONE]') {
           cb.onDone?.(fullText, fullReasoning)
+          emitMetrics()
           return
         }
         try {
           const json = JSON.parse(data)
+          if (json.usage && typeof json.usage === 'object') {
+            usage = { ...usage, ...json.usage }
+          }
           const delta = json.choices?.[0]?.delta
           if (!delta) continue
 
@@ -216,6 +270,7 @@ export async function chatStream(
           }
           // 最终答案
           if (delta.content) {
+            if (firstTokenAt === undefined) firstTokenAt = performance.now()
             fullText += delta.content
             cb.onChunk?.(delta.content)
           }
@@ -225,12 +280,14 @@ export async function chatStream(
       }
     }
     cb.onDone?.(fullText, fullReasoning)
+    emitMetrics()
   } catch (err) {
     if ((err as Error).name === 'AbortError') {
       cb.onDone?.(fullText, fullReasoning)
     } else {
       cb.onError?.(err as Error)
     }
+    emitMetrics()
   }
 }
 

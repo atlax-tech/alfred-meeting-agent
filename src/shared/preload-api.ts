@@ -12,6 +12,12 @@ import type {
   PersonalizationFeedbackEvidence,
   PersonalizationProfile,
   PersonalizationVersionSummary,
+  RepositoryIndexProgress,
+  RepositoryIndexRequest,
+  RepositoryEvidence,
+  RepositoryRetrievalRequest,
+  RepositorySnapshot,
+  RetrievedRepositoryContext,
   StealthState
 } from './types'
 
@@ -139,6 +145,24 @@ export interface InviewAPI {
     data: ArrayBuffer,
     fileName: string
   ) => Promise<string>
+
+  // 会前工作仓库知识索引
+  selectRepositoryFolder: () => Promise<string>
+  indexRepository: (request: RepositoryIndexRequest) => Promise<RepositorySnapshot>
+  cancelRepositoryIndex: () => Promise<boolean>
+  listRepositories: () => Promise<RepositorySnapshot[]>
+  checkRepositoryFreshness: (snapshotId: string) => Promise<RepositorySnapshot>
+  prewarmRepository: (snapshotId: string) => Promise<RepositorySnapshot>
+  retrieveRepositoryContext: (
+    request: RepositoryRetrievalRequest
+  ) => Promise<RetrievedRepositoryContext>
+  getRepositoryEvidence: (
+    snapshotId: string,
+    evidenceIds: string[]
+  ) => Promise<RepositoryEvidence[]>
+  onRepositoryIndexProgress: (
+    callback: (progress: RepositoryIndexProgress) => void
+  ) => () => void
 
   // 屏幕文字识别助手
   captureMentor: () => Promise<void>

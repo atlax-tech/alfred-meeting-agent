@@ -13,6 +13,7 @@ import { registerIpcHandlers } from './ipc-handlers'
 import { loadConfig } from './config'
 import { registerMentorShortcut, unregisterMentorShortcut } from './mentor'
 import { createTray, destroyTray, showMainWindow } from './tray'
+import { runRepositoryKnowledgeSelfTest } from './repository-knowledge/self-test'
 
 // Preserve the existing profile directory across the product rename so the
 // user's config, personalization, localStorage, and session data remain intact.
@@ -37,7 +38,8 @@ app.commandLine.appendSwitch('proxy-server', proxyURL)
 app.commandLine.appendSwitch('proxy-bypass-list', '<local>')
 
 // 单实例锁
-const gotLock = app.requestSingleInstanceLock()
+const repositorySelfTest = process.env.ALFRED_REPOSITORY_SELF_TEST === '1'
+const gotLock = repositorySelfTest || app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
 } else {
@@ -52,6 +54,18 @@ if (!gotLock) {
   })
 
   app.whenReady().then(async () => {
+    if (repositorySelfTest) {
+      try {
+        const result = await runRepositoryKnowledgeSelfTest()
+        console.log(`ALFRED_REPOSITORY_SELF_TEST_PASS ${JSON.stringify(result)}`)
+        app.exit(0)
+      } catch (error) {
+        console.error('ALFRED_REPOSITORY_SELF_TEST_FAIL', error)
+        app.exit(1)
+      }
+      return
+    }
+
     // 设置应用用户模型 ID(Windows 任务栏分组)
     if (process.platform === 'win32') {
       app.setAppUserModelId('com.atlax.inview-practice')

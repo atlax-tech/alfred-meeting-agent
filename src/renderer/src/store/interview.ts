@@ -12,12 +12,14 @@ import type {
   DetectedLanguage,
   DialogTurn,
   MeetingQARecord,
+  LLMCallPerformance,
   PersonalizationFeedbackEvidence,
   PersonalizationProfile,
   PersonalizationVersionSummary,
   QAFeedbackDetail,
   QARecord,
   Region,
+  RetrievedRepositoryContext,
   RunStatus,
   SessionPreset,
   StealthState
@@ -42,12 +44,17 @@ import type { OcrStitchStep } from '../services/ocr-stitch'
 import {
   extractQuestion,
   buildAnswerMessages,
+  buildQuestionTranslationMessages,
   buildTranslationMessages,
   buildContextCompressionMessages,
   getSpokenAnswerMaxTokens
 } from '../services/question-detector'
 import { looksLikeQaInvitation } from '../services/question-detector'
-import { reviewAnswer, type InputQuality } from '../services/answer-quality'
+import {
+  canSkipQaReview,
+  reviewAnswer,
+  type InputQuality
+} from '../services/answer-quality'
 import {
   buildPendingFeedbackInstructions,
   buildPersonalizationInstructions,
@@ -59,6 +66,14 @@ import {
   hasSessionPreset,
   normalizeSessionPreset
 } from '../services/session-preset'
+import {
+  buildAnswerStrategyInstructions,
+  buildConsistencyInstructions,
+  buildRelevantFeedbackInstructions,
+  buildRepositoryContextInstructions,
+  questionClusterId,
+  resolveAnswerStrategy
+} from '../services/answer-strategy'
 
 const HISTORY_STORAGE_KEY = 'inview-do:conversation-history:v2'
 const LEGACY_HISTORY_STORAGE_KEY = 'inview-do:conversation-history:v1'
@@ -304,6 +319,8 @@ interface InterviewStore {
   listening: boolean
   // 当前问题/答案
   currentQuestion: string
+  // 混合模式下非中文问题的中文翻译
+  currentQuestionTranslation: string
   currentAnswer: string
   currentAnswerConfidence: AnswerConfidence
   currentAnswerQualityNote: string
@@ -312,6 +329,7 @@ interface InterviewStore {
   // 混合模式下非中文答案的中文翻译
   currentTranslation: string
   currentDetectedLanguage: DetectedLanguage | null
+  isQuestionTranslating: boolean
   isTranslating: boolean
   // 当前思维链(思考模式开启时)
   currentReasoning: string
@@ -499,6 +517,7 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
   status: 'idle',
   listening: false,
   currentQuestion: '',
+  currentQuestionTranslation: '',
   currentAnswer: '',
   currentAnswerConfidence: 'unverified',
   currentAnswerQualityNote: '',
@@ -506,6 +525,7 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
   currentAnswerCorrected: false,
   currentTranslation: '',
   currentDetectedLanguage: null,
+  isQuestionTranslating: false,
   isTranslating: false,
   currentReasoning: '',
   isReasoning: false,
@@ -1938,7 +1958,14 @@ ${contextualMessage}`
   },
 
   stopListening: () => {
-    const { _stt, _abortAnswer, _sttBufferTimer } = get()
+    const state = get()
+    const { _stt, _abortAnswer, _sttBufferTimer } = state
+    const newQaCount = state.qaHistory.filter(
+      (item) => !state.contextCompressedAt || item.timestamp > state.contextCompressedAt
+    ).length
+    const newDialogCount = state.dialogHistory.filter(
+      (item) => !state.contextCompressedAt || item.timestamp > state.contextCompressedAt
+    ).length
     _stt?.stop()
     _abortAnswer?.abort()
     if (_sttBufferTimer) clearTimeout(_sttBufferTimer)
@@ -1952,15 +1979,20 @@ ${contextualMessage}`
       _pendingTranscriptSpeaker: null,
       listening: false,
       status: 'idle',
+      isQuestionTranslating: false,
       isTranslating: false,
       partialText: '',
       errorMessage: ''
     })
+    if (newQaCount >= 8 || newDialogCount >= 40) {
+      window.setTimeout(() => void get().compressContext(), 0)
+    }
   },
 
   clearCurrent: () =>
     set({
       currentQuestion: '',
+      currentQuestionTranslation: '',
       currentAnswer: '',
       currentAnswerConfidence: 'unverified',
       currentAnswerQualityNote: '',
@@ -1970,6 +2002,7 @@ ${contextualMessage}`
       currentDetectedLanguage: null,
       currentReasoning: '',
       isReasoning: false,
+      isQuestionTranslating: false,
       isTranslating: false,
       partialText: '',
       qaInvitation: '',
@@ -1995,6 +2028,7 @@ ${contextualMessage}`
       visibleMeetingQAId: null,
       archivedSessions: [],
       currentQuestion: '',
+      currentQuestionTranslation: '',
       currentAnswer: '',
       currentAnswerConfidence: 'unverified',
       currentAnswerQualityNote: '',
@@ -2002,6 +2036,7 @@ ${contextualMessage}`
       currentAnswerCorrected: false,
       currentTranslation: '',
       currentDetectedLanguage: null,
+      isQuestionTranslating: false,
       isTranslating: false
     })
     localStorage.removeItem(HISTORY_STORAGE_KEY)
@@ -2043,6 +2078,7 @@ ${contextualMessage}`
       visibleMeetingQAId: null,
       archivedSessions: archived,
       currentQuestion: '',
+      currentQuestionTranslation: '',
       currentAnswer: '',
       currentAnswerConfidence: 'unverified',
       currentAnswerQualityNote: '',
@@ -2052,6 +2088,7 @@ ${contextualMessage}`
       currentDetectedLanguage: null,
       currentReasoning: '',
       isReasoning: false,
+      isQuestionTranslating: false,
       isTranslating: false,
       partialText: '',
       errorMessage: ''
@@ -2066,6 +2103,11 @@ ${contextualMessage}`
       : createEmptySessionPreset()
     set({ sessionPreset: next, errorMessage: '' })
     persistConversationState(get())
+    if (next.repository) {
+      void window.inview.prewarmRepository(next.repository.snapshotId).catch((error) => {
+        set({ errorMessage: `工作仓库预加载失败：${(error as Error).message}` })
+      })
+    }
   },
 
   showPreparedQuestions: (invitation = '手动打开预置提问') => {
@@ -2193,7 +2235,11 @@ ${contextualMessage}`
           state.sessionFeedback
         ),
         controller.signal,
-        { thinkingOverride: 'disabled', responseLanguage: 'zh' }
+        {
+          thinkingOverride: 'disabled',
+          responseLanguage: 'zh',
+          task: 'compression'
+        }
       )
       if (controller.signal.aborted) return
       if (!summary.trim()) {
@@ -2479,6 +2525,8 @@ async function handleFinalTranscript(
 ): Promise<void> {
   if (!text.trim()) return
 
+  const responseStartedAt = performance.now()
+  const callMetrics: LLMCallPerformance[] = []
   const state = get()
   const { config } = state
 
@@ -2539,7 +2587,9 @@ async function handleFinalTranscript(
       // 当前文本通过 currentText 单独传入，避免在历史中重复出现一次。
       state.dialogHistory,
       config.interview.region,
-      buildSessionPresetDetectionContext(state.sessionPreset)
+      buildSessionPresetDetectionContext(state.sessionPreset),
+      undefined,
+      (metrics) => callMetrics.push(metrics)
     )
   } catch (err) {
     set({ status: 'idle', errorMessage: (err as Error).message })
@@ -2593,14 +2643,79 @@ async function handleFinalTranscript(
   const answerConfig = get().config
   const languageMode = answerConfig.interview.region
   const answerLanguage = resolveAnswerLanguage(languageMode, result.detectedLanguage)
+  const shouldTranslate = shouldGenerateTranslation(
+    languageMode,
+    answerConfig.interview.bilingualTranslationEnabled,
+    result.detectedLanguage
+  )
   const question = result.question
+  const strategy = resolveAnswerStrategy(question)
+  let repositoryContext: RetrievedRepositoryContext | null = null
+  let repositoryContextError = ''
+  const repositoryPreset = get().sessionPreset.repository
+  if (repositoryPreset) {
+    try {
+      repositoryContext = await window.inview.retrieveRepositoryContext({
+        snapshotId: repositoryPreset.snapshotId,
+        question,
+        answerStrategy: strategy,
+        sessionTopic: get().sessionPreset.topic,
+        sessionBackground: get().sessionPreset.background,
+        maxEvidence: strategy === 'project-scenario' ? 10 : 8,
+        maxCharacters: strategy === 'project-scenario' ? 14_000 : 10_000
+      })
+    } catch (error) {
+      repositoryContextError = (error as Error).message
+    }
+  }
+  const clusterId = questionClusterId(
+    question,
+    strategy,
+    repositoryContext?.snapshotId ?? repositoryPreset?.snapshotId
+  )
   const sessionPresetInstructions = buildSessionPresetInstructions(
     get().sessionPreset,
     question,
     answerConfig.llm.millionContextEnabled
   )
+  const repositoryInstructions = repositoryContext
+    ? buildRepositoryContextInstructions(
+        repositoryContext,
+        answerLanguage,
+        strategy
+      )
+    : repositoryPreset
+      ? `当前会话绑定的工作仓库快照无法读取：${repositoryContextError || '未知错误'}。不得假装已经读取仓库，也不得编造任何仓库事实。`
+      : ''
+  const strategyInstructions = buildAnswerStrategyInstructions(
+    strategy,
+    answerLanguage
+  )
+  const consistencyInstructions = buildConsistencyInstructions(
+    clusterId,
+    get().qaHistory,
+    repositoryContext?.evidence.map((item) => item.id) ?? [],
+    answerLanguage
+  )
+  const relevantFeedbackInstructions = buildRelevantFeedbackInstructions(
+    question,
+    clusterId,
+    [
+      ...get().qaHistory,
+      ...get().archivedSessions.flatMap((session) => session.qaHistory)
+    ],
+    get().personalizationEvidence,
+    answerLanguage
+  )
+  const currentSessionInstructions = [
+    sessionPresetInstructions,
+    repositoryInstructions,
+    strategyInstructions,
+    consistencyInstructions
+  ].filter(Boolean).join('\n\n')
   set({
     currentQuestion: question,
+    currentQuestionTranslation: '',
     currentAnswer: '',
     currentAnswerConfidence: 'unverified',
     currentAnswerQualityNote: '',
@@ -2610,6 +2725,7 @@ async function handleFinalTranscript(
     currentDetectedLanguage: result.detectedLanguage,
     currentReasoning: '',
     isReasoning: false,
+    isQuestionTranslating: shouldTranslate,
     isTranslating: false,
     status: 'answering'
   })
@@ -2633,15 +2749,45 @@ async function handleFinalTranscript(
     [currentSessionSnapshot(get()), ...get().archivedSessions],
     [
       buildPersonalizationInstructions(get().personalization),
-      buildPendingFeedbackInstructions(get().personalizationEvidence)
+      buildPendingFeedbackInstructions(get().personalizationEvidence),
+      relevantFeedbackInstructions
     ]
       .filter(Boolean)
       .join('\n\n'),
-    sessionPresetInstructions
+    currentSessionInstructions
   )
 
   const controller = new AbortController()
   set({ _abortAnswer: controller })
+
+  let fullQuestionTranslation = ''
+  let questionTranslationError: Error | null = null
+  const questionTranslationPromise = shouldTranslate
+    ? chatOnce(
+        answerConfig.llm,
+        buildQuestionTranslationMessages(question, result.detectedLanguage),
+        controller.signal,
+        {
+          thinkingOverride: 'disabled',
+          responseLanguage: 'zh',
+          task: 'translation',
+          maxTokensOverride: 500,
+          metricsCallback: (metrics) => callMetrics.push(metrics)
+        }
+      )
+        .then((translation) => {
+          if (controller.signal.aborted) return
+          fullQuestionTranslation = translation.trim()
+          set({
+            currentQuestionTranslation: fullQuestionTranslation,
+            isQuestionTranslating: false
+          })
+        })
+        .catch((error: Error) => {
+          questionTranslationError = error
+          set({ isQuestionTranslating: false })
+        })
+    : Promise.resolve()
 
   let fullAnswer = ''
   let fullReasoning = ''
@@ -2677,17 +2823,22 @@ async function handleFinalTranscript(
     controller.signal,
     {
       responseLanguage: answerLanguage,
+      task: 'answer',
+      metricsCallback: (metrics) => callMetrics.push(metrics),
       maxTokensOverride: getSpokenAnswerMaxTokens(
         answerConfig.interview.mode,
-        answerLanguage
+        answerLanguage,
+        strategy
       )
     }
   )
 
   if (answerError || controller.signal.aborted || !fullAnswer.trim()) return
 
-  set({ status: 'verifying' })
   const reviewEvidence = [
+    repositoryInstructions
+      ? `本轮生成器使用的工作仓库证据包:\n${repositoryInstructions}`
+      : '',
     sessionPresetInstructions
       ? `当前会话主题、资料和用户期望口径:\n${sessionPresetInstructions}`
       : '',
@@ -2704,29 +2855,47 @@ async function handleFinalTranscript(
     .filter(Boolean)
     .join('\n\n')
 
-  try {
-    const review = await reviewAnswer({
-      llmConfig: answerConfig.llm,
-      scope: 'qa',
-      subject: question,
-      draftAnswer: fullAnswer,
-      evidence: reviewEvidence,
-      responseLanguage: answerLanguage,
-      personalizationInstructions: [
-        buildPersonalizationInstructions(get().personalization),
-        buildPendingFeedbackInstructions(get().personalizationEvidence)
-      ]
-        .filter(Boolean)
-        .join('\n\n'),
-      signal: controller.signal
-    })
-    fullAnswer = review.finalAnswer
-    answerConfidence = review.confidence
-    answerQualityNote = review.note
-    answerVerified = review.verified
-    answerCorrected = review.corrected
-  } catch (err) {
-    answerQualityNote = `答案复核失败：${(err as Error).message}`
+  const reviewSkipped = canSkipQaReview(
+    answerConfig.llm,
+    question,
+    fullAnswer,
+    repositoryContext,
+    answerLanguage
+  )
+  if (reviewSkipped) {
+    answerConfidence = 'medium'
+    answerQualityNote = '仓库证据充分，已通过本地低风险门禁；本轮未调用独立复核模型'
+  } else {
+    set({ status: 'verifying' })
+    try {
+      const review = await reviewAnswer({
+        llmConfig: answerConfig.llm,
+        scope: 'qa',
+        subject: question,
+        draftAnswer: fullAnswer,
+        evidence: reviewEvidence,
+        responseLanguage: answerLanguage,
+        personalizationInstructions: [
+          buildPersonalizationInstructions(get().personalization),
+          buildPendingFeedbackInstructions(get().personalizationEvidence),
+          strategyInstructions
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
+        feedbackInstructions: relevantFeedbackInstructions,
+        answerStrategy: strategy,
+        repositoryContext,
+        metricsCallback: (metrics) => callMetrics.push(metrics),
+        signal: controller.signal
+      })
+      fullAnswer = review.finalAnswer
+      answerConfidence = review.confidence
+      answerQualityNote = review.note
+      answerVerified = review.verified
+      answerCorrected = review.corrected
+    } catch (err) {
+      answerQualityNote = `答案复核失败：${(err as Error).message}`
+    }
   }
 
   if (controller.signal.aborted || !fullAnswer.trim()) return
@@ -2738,13 +2907,11 @@ async function handleFinalTranscript(
     currentAnswerCorrected: answerCorrected
   })
 
-  // 4. 混合模式 + 非中文输入 + 设置已开启时,额外生成可折叠的中文翻译。
-  const shouldTranslate = shouldGenerateTranslation(
-    languageMode,
-    answerConfig.interview.bilingualTranslationEnabled,
-    result.detectedLanguage
-  )
+  // 问题翻译与答案生成并行，不增加开始展示答案的等待时间。
+  await questionTranslationPromise
+  if (controller.signal.aborted) return
 
+  // 4. 混合模式 + 非中文输入 + 设置已开启时,额外生成可折叠的中文翻译。
   let fullTranslation = ''
   let translationError: Error | null = null
   if (shouldTranslate) {
@@ -2766,7 +2933,12 @@ async function handleFinalTranscript(
         }
       },
       controller.signal,
-      { thinkingOverride: 'disabled', responseLanguage: 'zh' }
+      {
+        thinkingOverride: 'disabled',
+        responseLanguage: 'zh',
+        task: 'translation',
+        metricsCallback: (metrics) => callMetrics.push(metrics)
+      }
     )
   }
 
@@ -2775,6 +2947,7 @@ async function handleFinalTranscript(
   const qa: QARecord = {
     id: genId(),
     question,
+    questionTranslation: fullQuestionTranslation || undefined,
     answer: fullAnswer,
     reasoning: fullReasoning || undefined,
     translation: fullTranslation || undefined,
@@ -2785,6 +2958,17 @@ async function handleFinalTranscript(
     answerQualityNote: answerQualityNote || undefined,
     answerVerified,
     answerCorrected,
+    repositorySnapshotId: repositoryContext?.snapshotId,
+    repositoryEvidenceIds: repositoryContext?.evidence.map((item) => item.id),
+    answerStrategy: strategy,
+    questionClusterId: clusterId,
+    stanceKeys: repositoryContext?.evidence.map((item) => item.id),
+    performance: {
+      totalMs: Math.max(0, Math.round(performance.now() - responseStartedAt)),
+      retrievalMs: repositoryContext?.retrievalMs,
+      calls: callMetrics,
+      reviewSkipped
+    },
     timestamp: Date.now(),
     mode: answerConfig.interview.mode
   }
@@ -2792,11 +2976,17 @@ async function handleFinalTranscript(
     qaHistory: [qa, ...s.qaHistory].slice(0, 1000),
     status: s.listening ? 'listening' : 'idle',
     isReasoning: false,
+    isQuestionTranslating: false,
     isTranslating: false,
     _abortAnswer: null,
-    errorMessage: translationError
-      ? `中文翻译生成失败: ${translationError.message}`
-      : s.errorMessage
+    errorMessage: [
+      questionTranslationError
+        ? `问题中文翻译生成失败: ${questionTranslationError.message}`
+        : '',
+      translationError
+        ? `回答中文翻译生成失败: ${translationError.message}`
+        : ''
+    ].filter(Boolean).join('；') || s.errorMessage
   }))
   persistConversationState(get())
 }

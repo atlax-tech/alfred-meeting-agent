@@ -6,6 +6,7 @@ import { useState } from 'react'
 import { useInterviewStore } from '../store/interview'
 import type { MeetingQARecord, QARecord } from '@shared/types'
 import { TranslationPanel } from './TranslationPanel'
+import { QuestionTranslation } from './QuestionTranslation'
 import { AnswerFeedback } from './AnswerFeedback'
 import { MarkdownContent } from './MarkdownContent'
 import { AnswerQualityBadge } from './AnswerQualityBadge'
@@ -113,6 +114,7 @@ function QAItem({ qa, sessionId }: { qa: QARecord; sessionId: string }) {
       >
         <span className="text-slate-500">Q:</span> {qa.question}
       </div>
+      <QuestionTranslation translation={qa.questionTranslation} compact />
       {expanded && (
         <div className="mt-1.5 pt-1.5 border-t border-bg-hover space-y-2">
           {qa.reasoning && (

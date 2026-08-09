@@ -43,6 +43,16 @@ export const IPC = {
   RESUME_PARSE: 'resume:parse',
   // 当前会话参考资料解析(PDF/DOCX/纯文本 → 文本)
   SESSION_DOCUMENT_PARSE: 'session-document:parse',
+  // 会前工作仓库知识索引；实时问答只使用已发布快照。
+  REPOSITORY_SELECT: 'repository-knowledge:select',
+  REPOSITORY_INDEX: 'repository-knowledge:index',
+  REPOSITORY_INDEX_CANCEL: 'repository-knowledge:index-cancel',
+  REPOSITORY_INDEX_PROGRESS: 'repository-knowledge:index-progress',
+  REPOSITORY_LIST: 'repository-knowledge:list',
+  REPOSITORY_FRESHNESS: 'repository-knowledge:freshness',
+  REPOSITORY_PREWARM: 'repository-knowledge:prewarm',
+  REPOSITORY_RETRIEVE: 'repository-knowledge:retrieve',
+  REPOSITORY_EVIDENCE: 'repository-knowledge:evidence',
   // 屏幕文字识别助手
   MENTOR_CAPTURE: 'mentor:capture',
   MENTOR_CAPTURE_REQUEST: 'mentor:capture-request',

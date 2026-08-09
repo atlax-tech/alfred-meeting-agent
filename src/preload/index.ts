@@ -14,6 +14,12 @@ import type {
   PersonalizationFeedbackEvidence,
   PersonalizationProfile,
   PersonalizationVersionSummary,
+  RepositoryIndexProgress,
+  RepositoryIndexRequest,
+  RepositoryEvidence,
+  RepositoryRetrievalRequest,
+  RepositorySnapshot,
+  RetrievedRepositoryContext,
   StealthState
 } from '@shared/types'
 import type {
@@ -105,6 +111,42 @@ const api: InviewAPI = {
     fileName: string
   ): Promise<string> =>
     ipcRenderer.invoke(IPC.SESSION_DOCUMENT_PARSE, data, fileName),
+
+  selectRepositoryFolder: (): Promise<string> =>
+    ipcRenderer.invoke(IPC.REPOSITORY_SELECT),
+  indexRepository: (
+    request: RepositoryIndexRequest
+  ): Promise<RepositorySnapshot> =>
+    ipcRenderer.invoke(IPC.REPOSITORY_INDEX, request),
+  cancelRepositoryIndex: (): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.REPOSITORY_INDEX_CANCEL),
+  listRepositories: (): Promise<RepositorySnapshot[]> =>
+    ipcRenderer.invoke(IPC.REPOSITORY_LIST),
+  checkRepositoryFreshness: (
+    snapshotId: string
+  ): Promise<RepositorySnapshot> =>
+    ipcRenderer.invoke(IPC.REPOSITORY_FRESHNESS, snapshotId),
+  prewarmRepository: (snapshotId: string): Promise<RepositorySnapshot> =>
+    ipcRenderer.invoke(IPC.REPOSITORY_PREWARM, snapshotId),
+  retrieveRepositoryContext: (
+    request: RepositoryRetrievalRequest
+  ): Promise<RetrievedRepositoryContext> =>
+    ipcRenderer.invoke(IPC.REPOSITORY_RETRIEVE, request),
+  getRepositoryEvidence: (
+    snapshotId: string,
+    evidenceIds: string[]
+  ): Promise<RepositoryEvidence[]> =>
+    ipcRenderer.invoke(IPC.REPOSITORY_EVIDENCE, snapshotId, evidenceIds),
+  onRepositoryIndexProgress: (
+    callback: (progress: RepositoryIndexProgress) => void
+  ): (() => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      progress: RepositoryIndexProgress
+    ): void => callback(progress)
+    ipcRenderer.on(IPC.REPOSITORY_INDEX_PROGRESS, listener)
+    return () => ipcRenderer.removeListener(IPC.REPOSITORY_INDEX_PROGRESS, listener)
+  },
 
   // 屏幕文字识别助手
   captureMentor: (): Promise<void> =>

@@ -3,9 +3,11 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import type { RepositoryEvidence } from '@shared/types'
 import { useInterviewStore } from '../store/interview'
 import { AnswerFeedback } from './AnswerFeedback'
 import { TranslationPanel } from './TranslationPanel'
+import { QuestionTranslation } from './QuestionTranslation'
 import { MarkdownContent } from './MarkdownContent'
 import { AnswerQualityBadge } from './AnswerQualityBadge'
 import { chatQANoteSourceId } from '../services/meeting-notes'
@@ -21,6 +23,9 @@ const WORKING_LABEL = {
 export function CurrentQA() {
   const partialText = useInterviewStore((state) => state.partialText)
   const currentQuestion = useInterviewStore((state) => state.currentQuestion)
+  const currentQuestionTranslation = useInterviewStore(
+    (state) => state.currentQuestionTranslation
+  )
   const currentAnswer = useInterviewStore((state) => state.currentAnswer)
   const currentAnswerConfidence = useInterviewStore(
     (state) => state.currentAnswerConfidence
@@ -34,6 +39,9 @@ export function CurrentQA() {
   const currentDetectedLanguage = useInterviewStore((state) => state.currentDetectedLanguage)
   const currentReasoning = useInterviewStore((state) => state.currentReasoning)
   const isReasoning = useInterviewStore((state) => state.isReasoning)
+  const isQuestionTranslating = useInterviewStore(
+    (state) => state.isQuestionTranslating
+  )
   const isTranslating = useInterviewStore((state) => state.isTranslating)
   const mixedMode = useInterviewStore((state) => state.config.interview.region === 'mixed')
   const status = useInterviewStore((state) => state.status)
@@ -56,10 +64,12 @@ export function CurrentQA() {
 
   const answerEndRef = useRef<HTMLSpanElement>(null)
   const [showReasoning, setShowReasoning] = useState(false)
+  const [showEvidence, setShowEvidence] = useState(false)
+  const [repositoryEvidence, setRepositoryEvidence] = useState<RepositoryEvidence[]>([])
 
   useEffect(() => {
     answerEndRef.current?.scrollIntoView({ block: 'nearest' })
-  }, [currentAnswer, currentTranslation])
+  }, [currentAnswer, currentQuestionTranslation, currentTranslation])
 
   useEffect(() => {
     setShowReasoning(false)
@@ -69,12 +79,22 @@ export function CurrentQA() {
     qaHistory[0]?.question === currentQuestion && qaHistory[0]?.answer === currentAnswer
       ? qaHistory[0]
       : null
+  useEffect(() => {
+    setShowEvidence(false)
+    setRepositoryEvidence([])
+    if (!completedQA?.repositorySnapshotId || !completedQA.repositoryEvidenceIds?.length) return
+    void window.inview.getRepositoryEvidence(
+      completedQA.repositorySnapshotId,
+      completedQA.repositoryEvidenceIds
+    ).then(setRepositoryEvidence).catch(() => setRepositoryEvidence([]))
+  }, [completedQA?.id, completedQA?.repositorySnapshotId])
   const workingLabel =
     status in WORKING_LABEL
       ? WORKING_LABEL[status as keyof typeof WORKING_LABEL]
       : '正在处理…'
   const hasContent =
     currentQuestion ||
+    currentQuestionTranslation ||
     currentAnswer ||
     currentReasoning ||
     currentTranslation ||
@@ -130,6 +150,11 @@ export function CurrentQA() {
           >
             {currentQuestion}
           </div>
+          <QuestionTranslation
+            translation={currentQuestionTranslation}
+            isLoading={isQuestionTranslating}
+            contentFontSize={questionFontSize}
+          />
         </article>
       ) : null}
 
@@ -167,6 +192,35 @@ export function CurrentQA() {
             <p className="mt-2 border-t border-slate-700/70 pt-2 text-[10px] leading-4 text-amber-200/80">
               可靠性提示：{currentAnswerQualityNote}
             </p>
+          ) : null}
+          {completedQA?.repositorySnapshotId && completedQA.repositoryEvidenceIds?.length ? (
+            <div className="mt-2 border-t border-slate-700/70 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowEvidence((value) => !value)}
+                className="text-[10px] text-accent-glow hover:text-white"
+              >
+                仓库依据 {completedQA.repositoryEvidenceIds.length} 条
+                {showEvidence ? ' ▲' : ' ▼'}
+              </button>
+              {showEvidence ? (
+                <div className="mt-2 max-h-36 space-y-1.5 overflow-y-auto">
+                  {repositoryEvidence.length > 0 ? repositoryEvidence.map((item) => (
+                    <div
+                      key={item.id}
+                      className="rounded bg-bg px-2 py-1.5 text-[9px] leading-4 text-slate-400"
+                    >
+                      <div className="break-all text-slate-300">
+                        {item.relativePath}:{item.startLine}-{item.endLine}
+                      </div>
+                      <div className="mt-0.5 line-clamp-2">{item.title}</div>
+                    </div>
+                  )) : (
+                    <div className="text-[9px] text-slate-600">证据详情暂时无法读取</div>
+                  )}
+                </div>
+              ) : null}
+            </div>
           ) : null}
         </article>
       ) : null}

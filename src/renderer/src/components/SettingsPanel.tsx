@@ -134,11 +134,48 @@ export function SettingsPanel() {
               </Field>
             </div>
 
+            <div className="grid grid-cols-3 gap-3">
+              <Field label="轻量模型（可选）">
+                <input
+                  type="text"
+                  value={draft.llm.fastModel ?? ''}
+                  onChange={(e) => patchLLM({ fastModel: e.target.value })}
+                  placeholder="留空则使用主模型"
+                  className={inputCls}
+                />
+              </Field>
+              <Field label="复核模型（可选）">
+                <input
+                  type="text"
+                  value={draft.llm.reviewModel ?? ''}
+                  onChange={(e) => patchLLM({ reviewModel: e.target.value })}
+                  placeholder="留空则使用主模型"
+                  className={inputCls}
+                />
+              </Field>
+              <Field label="离线模型（可选）">
+                <input
+                  type="text"
+                  value={draft.llm.offlineModel ?? ''}
+                  onChange={(e) => patchLLM({ offlineModel: e.target.value })}
+                  placeholder="仓库知识包"
+                  className={inputCls}
+                />
+              </Field>
+            </div>
+
             <Toggle
               label="DeepSeek 1M 长上下文"
               desc="开启后尽量携带完整历史问答、现场对话、简历和知识库。仅在当前模型确实支持大上下文时开启，输入成本和响应时间会增加。"
               checked={draft.llm.millionContextEnabled}
               onChange={(v) => patchLLM({ millionContextEnabled: v })}
+            />
+
+            <Toggle
+              label="低风险自适应复核（实验）"
+              desc="默认关闭。开启后，只有证据充分、无数字/代码/高风险结论且通过本地口语门禁的短答才跳过第二次模型复核；其余问题仍强制复核。"
+              checked={draft.llm.adaptiveReviewEnabled === true}
+              onChange={(v) => patchLLM({ adaptiveReviewEnabled: v })}
             />
 
             {/* 思考模式(DeepSeek v4 系列) */}
@@ -185,8 +222,8 @@ export function SettingsPanel() {
               本地 Ollama <code className="text-accent">http://localhost:11434/v1</code>。
             </div>
             <div className="rounded border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs leading-5 text-amber-100/80">
-              为优先保证正确率，Mentor 和问答答案生成后会自动追加一次独立复核，并显示置信度。
-              这会增加一次模型调用和少量等待时间；证据不足时会明确提示，而不是猜测。
+              默认情况下，Mentor 和问答答案生成后会自动追加一次独立复核，并显示置信度。
+              仅在你主动开启低风险自适应复核后，满足全部本地证据门禁的短答才会跳过第二次调用。
             </div>
           </Section>
 
@@ -349,8 +386,8 @@ export function SettingsPanel() {
               </Field>
             </div>
             <Toggle
-              label="混合模式双语翻译"
-              desc="仅混合模式生效：检测到非中文问题时，在原语言回答下方额外生成可展开/折叠的中文翻译"
+              label="混合模式中文翻译"
+              desc="仅混合模式生效：检测到非中文问题时显示中文题意，并在原语言回答下方生成可展开/折叠的中文翻译；中文内容不翻译"
               checked={draft.interview.bilingualTranslationEnabled}
               onChange={(v) => patchInterview({ bilingualTranslationEnabled: v })}
             />

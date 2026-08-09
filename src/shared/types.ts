@@ -53,6 +53,14 @@ export interface LLMConfig {
   reasoningEffort: 'high' | 'max'
   /** 使用模型的大上下文窗口，尽量携带完整会话、简历和知识库 */
   millionContextEnabled: boolean
+  /** 可选轻量模型；留空时与主模型相同，用于问题提取等短任务。 */
+  fastModel?: string
+  /** 可选复核模型；留空时与主模型相同。 */
+  reviewModel?: string
+  /** 可选离线模型；留空时与主模型相同，用于会前仓库知识包生成。 */
+  offlineModel?: string
+  /** 基于本地证据和风险门禁跳过低风险二次复核；默认关闭，需评测后启用。 */
+  adaptiveReviewEnabled?: boolean
 }
 
 /** 音频源类型 */
@@ -200,9 +208,11 @@ export interface QARecord {
   id: string
   question: string
   answer: string
+  /** 混合模式下非中文问题的中文翻译 */
+  questionTranslation?: string
   /** 思维链(思考模式开启时) */
   reasoning?: string
-  /** 混合模式下的中文翻译 */
+  /** 混合模式下非中文回答的中文翻译 */
   translation?: string
   /** 当前问题检测到的语言 */
   detectedLanguage?: DetectedLanguage
@@ -216,6 +226,18 @@ export interface QARecord {
   answerVerified?: boolean
   /** 复核阶段是否修正过候选答案 */
   answerCorrected?: boolean
+  /** 本轮仓库事实来自哪个不可变快照。 */
+  repositorySnapshotId?: string
+  /** 本轮实际送入生成器和复核器的仓库证据 ID。 */
+  repositoryEvidenceIds?: string[]
+  /** 当前问题使用的内部回答思路，不作为固定输出模板。 */
+  answerStrategy?: AnswerStrategyKind
+  /** 语义相近问题共享的稳定簇，用于保持事实与口径一致。 */
+  questionClusterId?: string
+  /** 本轮已经表达的稳定事实/立场键。 */
+  stanceKeys?: string[]
+  /** 本轮关键耗时和用量，仅保存在本机用于优化。 */
+  performance?: QAResponsePerformance
   /** 用户对本轮回答的复盘反馈；后续回答会自动吸收 */
   feedback?: string
   /** 结构化反馈；旧历史只有 feedback 字符串时仍可继续使用。 */
@@ -249,6 +271,188 @@ export interface SessionPreparedQuestion {
   question: string
 }
 
+export type RepositoryIndexState =
+  | 'idle'
+  | 'indexing'
+  | 'ready'
+  | 'ready-with-warnings'
+  | 'stale'
+  | 'error'
+
+export type RepositoryEvidenceKind =
+  | 'documentation'
+  | 'manifest'
+  | 'configuration'
+  | 'source'
+  | 'test'
+  | 'decision'
+  | 'other'
+
+export type RepositoryFactCategory =
+  | 'problem'
+  | 'main-idea'
+  | 'design'
+  | 'hard-part'
+  | 'testing'
+  | 'result'
+  | 'constraint'
+  | 'boundary'
+  | 'failure-handling'
+  | 'measurement'
+  | 'module'
+  | 'technology'
+  | 'other'
+
+/** 仓库内一段可追溯、可校验的原始证据。 */
+export interface RepositoryEvidence {
+  id: string
+  snapshotId: string
+  relativePath: string
+  title: string
+  kind: RepositoryEvidenceKind
+  language: string
+  startLine: number
+  endLine: number
+  content: string
+  contentHash: string
+  searchTerms: string[]
+}
+
+/** 离线知识包中的事实卡；模型只能使用 evidenceIds 支持的内容。 */
+export interface RepositoryKnowledgeFact {
+  id: string
+  category: RepositoryFactCategory
+  statement: string
+  evidenceIds: string[]
+  confidence: 'high' | 'medium' | 'low'
+  aliases: string[]
+}
+
+export interface RepositoryGlossaryItem {
+  term: string
+  aliases: string[]
+  plainExplanation: string
+  evidenceIds: string[]
+}
+
+export interface RepositoryLikelyQuestion {
+  question: string
+  factIds: string[]
+  evidenceIds: string[]
+}
+
+/** 会前生成并通过证据 ID 校验的紧凑仓库知识包。 */
+export interface RepositoryKnowledgePack {
+  snapshotId: string
+  overview: string
+  facts: RepositoryKnowledgeFact[]
+  glossary: RepositoryGlossaryItem[]
+  likelyQuestions: RepositoryLikelyQuestion[]
+  warnings: string[]
+  generatedAt: number
+  generatedBy: 'deterministic' | 'llm-verified'
+}
+
+/** 一次不可变仓库索引的元数据。原始证据保存在主进程 userData。 */
+export interface RepositorySnapshot {
+  id: string
+  repositoryId: string
+  repositoryName: string
+  rootPath: string
+  branch: string
+  commit: string
+  dirty: boolean
+  dirtySignature: string
+  state: RepositoryIndexState
+  createdAt: number
+  indexVersion: number
+  filesScanned: number
+  filesIndexed: number
+  chunksIndexed: number
+  charactersIndexed: number
+  excludedFiles: number
+  warnings: string[]
+  knowledgePack: RepositoryKnowledgePack
+}
+
+/** 当前会话只保存仓库快照引用，不保存仓库原文。 */
+export interface RepositoryPresetRef {
+  repositoryId: string
+  snapshotId: string
+  repositoryName: string
+  branch: string
+  commit: string
+  dirty: boolean
+  indexedAt: number
+}
+
+export interface RepositoryIndexProgress {
+  repositoryId?: string
+  state: RepositoryIndexState
+  stage: 'idle' | 'scanning' | 'chunking' | 'indexing' | 'distilling' | 'validating' | 'saving' | 'ready' | 'error'
+  completed: number
+  total: number
+  message: string
+  error?: string
+}
+
+export interface RepositoryIndexRequest {
+  rootPath: string
+  generateKnowledgePack?: boolean
+}
+
+export interface RepositoryRetrievalRequest {
+  snapshotId: string
+  question: string
+  /** 当前问题的回答策略，用于选择事实型、场景型或故障型证据。 */
+  answerStrategy?: AnswerStrategyKind
+  sessionTopic?: string
+  sessionBackground?: string
+  maxEvidence?: number
+  maxCharacters?: number
+}
+
+/** 生成器与复核器必须复用同一个上下文包，避免证据漂移。 */
+export interface RetrievedRepositoryContext {
+  snapshotId: string
+  repositoryName: string
+  knowledgeBrief: string
+  evidence: RepositoryEvidence[]
+  confidence: 'high' | 'medium' | 'low'
+  stale: boolean
+  warnings: string[]
+  retrievalMs: number
+}
+
+export type AnswerStrategyKind =
+  | 'project-overview'
+  | 'project-scenario'
+  | 'project-deep-dive'
+  | 'technical-design'
+  | 'comparison'
+  | 'incident-or-failure'
+  | 'progress-and-result'
+  | 'definition'
+  | 'general'
+  | 'clarification'
+
+export interface LLMCallPerformance {
+  task: 'extract' | 'answer' | 'review' | 'translation' | 'compression' | 'offline'
+  model: string
+  durationMs: number
+  timeToFirstTokenMs?: number
+  promptTokens?: number
+  completionTokens?: number
+  totalTokens?: number
+}
+
+export interface QAResponsePerformance {
+  totalMs: number
+  retrievalMs?: number
+  calls: LLMCallPerformance[]
+  reviewSkipped?: boolean
+}
+
 /** 一次由用户预置提问、发言者现场回答组成的会议 QA 记录。 */
 export interface MeetingQARecord {
   id: string
@@ -271,6 +475,8 @@ export interface SessionPreset {
   documents: SessionPresetDocument[]
   qaPairs: SessionPresetQA[]
   preparedQuestions: SessionPreparedQuestion[]
+  /** 可选工作仓库；绑定后固定到本轮不可变快照。 */
+  repository?: RepositoryPresetRef
   updatedAt: number
 }
 
@@ -281,6 +487,7 @@ export function createEmptySessionPreset(): SessionPreset {
     documents: [],
     qaPairs: [],
     preparedQuestions: [],
+    repository: undefined,
     updatedAt: 0
   }
 }
@@ -494,7 +701,11 @@ export const DEFAULT_CONFIG: AppConfig = {
     thinking: 'disabled',
     // 若开启思考,high 是性价比最优;max 更准但更慢
     reasoningEffort: 'high',
-    millionContextEnabled: false
+    millionContextEnabled: false,
+    fastModel: '',
+    reviewModel: '',
+    offlineModel: '',
+    adaptiveReviewEnabled: false
   },
   stt: {
     provider: 'whisper-api',

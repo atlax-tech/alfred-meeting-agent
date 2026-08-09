@@ -6,6 +6,7 @@ import type {
 } from '@shared/types'
 import { useInterviewStore } from '../store/interview'
 import { TranslationPanel } from './TranslationPanel'
+import { QuestionTranslation } from './QuestionTranslation'
 import { AnswerFeedback } from './AnswerFeedback'
 import { SessionFeedback } from './SessionFeedback'
 import { MarkdownContent } from './MarkdownContent'
@@ -48,6 +49,7 @@ function ReviewItem({ qa, sessionId, defaultOpen }: { qa: QARecord; sessionId: s
           <span>{open ? '收起 ▲' : '展开 ▼'}</span>
         </div>
         <div className="text-sm leading-relaxed text-slate-100">{qa.question}</div>
+        <QuestionTranslation translation={qa.questionTranslation} compact />
       </button>
 
       {open ? (
@@ -132,7 +134,7 @@ export function ConversationHistoryPanel() {
     if (!selected) return []
     if (!deferredQuery) return selected.qaHistory
     return selected.qaHistory.filter((qa) =>
-      `${qa.question}\n${qa.answer}\n${qa.translation ?? ''}\n${qa.feedback ?? ''}`
+      `${qa.question}\n${qa.questionTranslation ?? ''}\n${qa.answer}\n${qa.translation ?? ''}\n${qa.feedback ?? ''}`
         .toLocaleLowerCase()
         .includes(deferredQuery)
     )

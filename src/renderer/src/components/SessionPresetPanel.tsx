@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
+  RepositoryIndexProgress,
+  RepositorySnapshot,
   SessionPreset,
   SessionPresetDocument,
   SessionPreparedQuestion,
@@ -50,26 +52,41 @@ export function SessionPresetPanel({ open, onClose }: SessionPresetPanelProps) {
   const [parsing, setParsing] = useState(false)
   const [fileError, setFileError] = useState('')
   const [validationError, setValidationError] = useState('')
+  const [repositories, setRepositories] = useState<RepositorySnapshot[]>([])
+  const [repositoryProgress, setRepositoryProgress] = useState<RepositoryIndexProgress | null>(null)
+  const [repositoryError, setRepositoryError] = useState('')
+  const [repositoryBusy, setRepositoryBusy] = useState(false)
 
   useEffect(() => {
     if (!open) return
     setDraft(structuredClone(preset))
     setFileError('')
     setValidationError('')
+    setRepositoryError('')
+    void window.inview.listRepositories()
+      .then(setRepositories)
+      .catch((error) => setRepositoryError(`读取仓库知识快照失败：${(error as Error).message}`))
   }, [open, preset])
+
+  useEffect(() => {
+    if (!open) return
+    return window.inview.onRepositoryIndexProgress((progress) => {
+      setRepositoryProgress(progress)
+    })
+  }, [open])
 
   useEffect(() => {
     if (!open) return
     void window.inview.inputFocusAcquire().catch(() => {})
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !parsing) onClose()
+      if (event.key === 'Escape' && !parsing && !repositoryBusy) onClose()
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
       void window.inview.inputFocusRelease().catch(() => {})
     }
-  }, [onClose, open, parsing])
+  }, [onClose, open, parsing, repositoryBusy])
 
   const documentCharacters = useMemo(
     () => draft.documents.reduce((total, item) => total + item.characterCount, 0),
@@ -120,6 +137,71 @@ export function SessionPresetPanel({ open, onClose }: SessionPresetPanelProps) {
       ...current,
       documents: current.documents.filter((item) => item.id !== id)
     }))
+  }
+
+  const bindRepository = async (snapshot: RepositorySnapshot) => {
+    setRepositoryError('')
+    try {
+      const fresh = await window.inview.checkRepositoryFreshness(snapshot.id)
+      setRepositories((current) =>
+        current.map((item) => item.id === fresh.id ? fresh : item)
+      )
+      if (fresh.state === 'stale') {
+        setRepositoryError('该知识快照对应的工作仓库已经变化，请先刷新索引再绑定。')
+        return
+      }
+      await window.inview.prewarmRepository(fresh.id)
+      setDraft((current) => ({
+        ...current,
+        repository: {
+          repositoryId: fresh.repositoryId,
+          snapshotId: fresh.id,
+          repositoryName: fresh.repositoryName,
+          branch: fresh.branch,
+          commit: fresh.commit,
+          dirty: fresh.dirty,
+          indexedAt: fresh.createdAt
+        }
+      }))
+    } catch (error) {
+      setRepositoryError(`绑定工作仓库失败：${(error as Error).message}`)
+    }
+  }
+
+  const indexRepository = async (rootPath?: string) => {
+    if (repositoryBusy) return
+    setRepositoryError('')
+    setRepositoryBusy(true)
+    setRepositoryProgress({
+      state: 'indexing',
+      stage: 'scanning',
+      completed: 0,
+      total: 1,
+      message: '正在准备仓库索引'
+    })
+    try {
+      const selectedPath = rootPath ?? await window.inview.selectRepositoryFolder()
+      if (!selectedPath) return
+      const snapshot = await window.inview.indexRepository({
+        rootPath: selectedPath,
+        generateKnowledgePack: true
+      })
+      const latest = await window.inview.listRepositories()
+      setRepositories(latest)
+      await bindRepository(snapshot)
+    } catch (error) {
+      if ((error as Error).message.includes('取消')) {
+        setRepositoryError('已取消本次仓库索引，上一份可用快照没有受到影响。')
+      } else {
+        setRepositoryError(`仓库索引失败：${(error as Error).message}`)
+      }
+    } finally {
+      setRepositoryBusy(false)
+    }
+  }
+
+  const cancelRepositoryIndex = async () => {
+    await window.inview.cancelRepositoryIndex().catch(() => false)
   }
 
   const handleFiles = async (files: FileList | null) => {
@@ -214,7 +296,7 @@ export function SessionPresetPanel({ open, onClose }: SessionPresetPanelProps) {
         <button
           type="button"
           onClick={onClose}
-          disabled={parsing}
+          disabled={parsing || repositoryBusy}
           className="bubble-no-drag flex h-7 w-7 items-center justify-center rounded-md text-lg text-slate-400 hover:bg-bg-hover hover:text-white disabled:opacity-40"
           aria-label="关闭会话预设"
         >
@@ -261,6 +343,136 @@ export function SessionPresetPanel({ open, onClose }: SessionPresetPanelProps) {
               className={`${inputClassName} resize-y leading-5`}
             />
           </label>
+        </section>
+
+        <section className="space-y-3 border-t border-bg-card pt-4" aria-labelledby="repository-knowledge-title">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 id="repository-knowledge-title" className="text-xs font-medium text-slate-200">
+                工作仓库知识
+              </h2>
+              <p className="mt-1 text-[10px] leading-4 text-slate-500">
+                会前安全扫描并发布不可变知识快照。会议中只做本地检索，不分析整个仓库。
+              </p>
+            </div>
+            {draft.repository ? (
+              <span className="shrink-0 rounded bg-ok/10 px-2 py-1 text-[9px] text-ok">
+                已预加载
+              </span>
+            ) : null}
+          </div>
+
+          {draft.repository ? (
+            <div className="rounded-lg border border-ok/25 bg-ok/5 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-[11px] font-medium text-slate-200">
+                    {draft.repository.repositoryName}
+                  </div>
+                  <div className="mt-1 text-[9px] leading-4 text-slate-500">
+                    {draft.repository.branch} · {draft.repository.commit.slice(0, 12)}
+                    {draft.repository.dirty ? ' · 含未提交改动' : ' · 工作区干净'}
+                  </div>
+                  <div className="text-[9px] text-slate-600">
+                    快照 {draft.repository.snapshotId}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDraft((current) => ({ ...current, repository: undefined }))}
+                  className="rounded px-2 py-1 text-[10px] text-slate-500 hover:bg-danger/10 hover:text-danger"
+                >
+                  解绑
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {repositoryBusy && repositoryProgress ? (
+            <div className="rounded-lg border border-accent/25 bg-accent/5 p-3">
+              <div className="flex items-center justify-between gap-3 text-[10px]">
+                <span className="text-accent-glow">{repositoryProgress.message}</span>
+                <span className="text-slate-500">
+                  {repositoryProgress.total > 0
+                    ? `${Math.min(100, Math.round(repositoryProgress.completed / repositoryProgress.total * 100))}%`
+                    : '处理中'}
+                </span>
+              </div>
+              <div className="mt-2 h-1 overflow-hidden rounded bg-bg-hover">
+                <div
+                  className="h-full bg-accent transition-[width]"
+                  style={{
+                    width: `${repositoryProgress.total > 0
+                      ? Math.min(100, repositoryProgress.completed / repositoryProgress.total * 100)
+                      : 8}%`
+                  }}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => void cancelRepositoryIndex()}
+                className="mt-2 text-[9px] text-slate-500 hover:text-danger"
+              >
+                取消索引
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void indexRepository()}
+              className="w-full rounded-md border border-dashed border-bg-hover bg-bg/40 px-3 py-3 text-xs text-slate-400 transition hover:border-accent/50 hover:text-white"
+            >
+              选择并建立工作仓库知识
+            </button>
+          )}
+
+          <div className="text-[9px] leading-4 text-slate-600">
+            默认排除密钥、.env、证书、依赖、构建产物、二进制和符号链接。离线知识包会把少量候选证据发送给你配置的 LLM 做事实卡生成与复核；实时回答只发送当前问题命中的证据。
+          </div>
+
+          {repositories.length > 0 ? (
+            <div className="space-y-2">
+              <div className="text-[10px] text-slate-500">已有可用快照</div>
+              {repositories.map((snapshot) => (
+                <div
+                  key={snapshot.id}
+                  className="flex items-center gap-3 rounded-md border border-bg-hover bg-bg-card px-3 py-2"
+                >
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-bg text-[10px] text-slate-500">
+                    仓
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[11px] text-slate-300">
+                      {snapshot.repositoryName}
+                    </span>
+                    <span className={`mt-0.5 block text-[9px] ${snapshot.state === 'stale' ? 'text-warn' : 'text-slate-600'}`}>
+                      {snapshot.branch} · {snapshot.commit.slice(0, 10)} · {snapshot.chunksIndexed} 段
+                      {snapshot.state === 'stale' ? ' · 已过期' : ''}
+                      {snapshot.warnings.length > 0 ? ` · ${snapshot.warnings.length} 条提示` : ''}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    disabled={repositoryBusy}
+                    onClick={() => void (
+                      snapshot.state === 'stale'
+                        ? indexRepository(snapshot.rootPath)
+                        : bindRepository(snapshot)
+                    )}
+                    className="rounded bg-bg px-2 py-1 text-[10px] text-slate-400 hover:bg-bg-hover hover:text-white disabled:opacity-40"
+                  >
+                    {snapshot.state === 'stale' ? '刷新' : '绑定'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {repositoryError ? (
+            <div className="rounded border border-danger/20 bg-danger/5 px-3 py-2 text-[10px] leading-4 text-danger">
+              {repositoryError}
+            </div>
+          ) : null}
         </section>
 
         <section className="space-y-3 border-t border-bg-card pt-4" aria-labelledby="prepared-questions-title">
@@ -489,7 +701,7 @@ export function SessionPresetPanel({ open, onClose }: SessionPresetPanelProps) {
         <button
           type="button"
           onClick={onClose}
-          disabled={parsing}
+          disabled={parsing || repositoryBusy}
           className="rounded bg-bg-card px-3 py-1.5 text-xs text-slate-300 hover:bg-bg-hover disabled:opacity-40"
         >
           取消
@@ -497,7 +709,7 @@ export function SessionPresetPanel({ open, onClose }: SessionPresetPanelProps) {
         <button
           type="button"
           onClick={handleSave}
-          disabled={parsing}
+          disabled={parsing || repositoryBusy}
           className="rounded bg-accent px-4 py-1.5 text-xs font-medium text-white hover:bg-accent/80 disabled:opacity-40"
         >
           保存到本轮

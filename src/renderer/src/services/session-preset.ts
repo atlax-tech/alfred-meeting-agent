@@ -2,7 +2,8 @@ import type {
   SessionPreset,
   SessionPresetDocument,
   SessionPreparedQuestion,
-  SessionPresetQA
+  SessionPresetQA,
+  RepositoryPresetRef
 } from '@shared/types'
 import { createEmptySessionPreset } from '@shared/types'
 
@@ -83,6 +84,24 @@ function normalizePreparedQuestion(
   }
 }
 
+function normalizeRepository(value: unknown): RepositoryPresetRef | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as Partial<RepositoryPresetRef>
+  const repositoryId = cleanText(raw.repositoryId, 80)
+  const snapshotId = cleanText(raw.snapshotId, 80)
+  const repositoryName = cleanText(raw.repositoryName, 240)
+  if (!repositoryId || !snapshotId || !repositoryName) return undefined
+  return {
+    repositoryId,
+    snapshotId,
+    repositoryName,
+    branch: cleanText(raw.branch, 240) || 'unknown',
+    commit: cleanText(raw.commit, 120) || 'working-tree',
+    dirty: raw.dirty === true,
+    indexedAt: Math.max(0, Number(raw.indexedAt) || 0)
+  }
+}
+
 /** 对本地恢复和 UI 提交的数据统一做数量、长度和结构约束。 */
 export function normalizeSessionPreset(value: unknown): SessionPreset {
   if (!value || typeof value !== 'object') return createEmptySessionPreset()
@@ -119,6 +138,7 @@ export function normalizeSessionPreset(value: unknown): SessionPreset {
     documents,
     qaPairs,
     preparedQuestions,
+    repository: normalizeRepository(raw.repository),
     updatedAt: Math.max(0, Number(raw.updatedAt) || 0)
   }
 }
@@ -128,6 +148,7 @@ export function hasSessionPreset(preset: SessionPreset | undefined): boolean {
     preset?.topic.trim() ||
       preset?.background.trim() ||
       preset?.documents.length ||
+      preset?.repository ||
       preset?.preparedQuestions.some((item) => item.question.trim()) ||
       preset?.qaPairs.some(
         (item) => item.question.trim() || item.expectedAnswer.trim()
@@ -244,9 +265,9 @@ function relevantDocumentChunks(
     add(chunk)
   }
 
-  // 词面没有命中时仍给每份资料一个开头片段，让模型能处理同义问法。
+  // 词面没有命中时只给最多两份资料的开头，避免把每份文档开头都塞入实时上下文。
   for (const chunk of ranked) {
-    if (chunk.chunkIndex === 0) add(chunk)
+    if (chunk.chunkIndex === 0 && selected.length < 2) add(chunk)
   }
   return selected
 }
@@ -266,11 +287,20 @@ function relevantQAPairs(
   const selected: SessionPresetQA[] = []
   let used = 0
   for (const candidate of ranked) {
+    if (candidate.score <= 0) continue
     const size = candidate.item.question.length + candidate.item.expectedAnswer.length
     if (selected.length > 0 && used + size > budget) break
     selected.push(candidate.item)
     used += size
     if (selected.length >= limit) break
+  }
+  if (selected.length === 0) {
+    for (const item of preset.qaPairs.slice(0, 2)) {
+      const size = item.question.length + item.expectedAnswer.length
+      if (selected.length > 0 && used + size > budget) break
+      selected.push(item)
+      used += size
+    }
   }
   return selected
 }
@@ -296,6 +326,9 @@ export function buildSessionPresetDetectionContext(
     preset.topic ? `当前会话主题：${preset.topic}` : '',
     preset.background
       ? `背景：${preset.background.slice(0, 2000)}`
+      : '',
+    preset.repository
+      ? `当前工作仓库：${preset.repository.repositoryName}（${preset.repository.branch} / ${preset.repository.commit.slice(0, 12)}）`
       : '',
     questions ? `可能出现的问题：\n${questions}` : '',
     preparedQuestions

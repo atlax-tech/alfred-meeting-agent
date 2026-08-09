@@ -179,19 +179,35 @@ function normalizePreset(value: unknown): SessionPreset | undefined {
         }]
       })
     : []
+  const repository = raw.repository && typeof raw.repository === 'object'
+    ? {
+        repositoryId: cleanText(raw.repository.repositoryId, 80),
+        snapshotId: cleanText(raw.repository.snapshotId, 80),
+        repositoryName: cleanText(raw.repository.repositoryName, 240),
+        branch: cleanText(raw.repository.branch, 240) || 'unknown',
+        commit: cleanText(raw.repository.commit, 120) || 'working-tree',
+        dirty: raw.repository.dirty === true,
+        indexedAt: Math.max(0, Number(raw.repository.indexedAt) || 0)
+      }
+    : undefined
   const preset: SessionPreset = {
     topic: cleanText(raw.topic, 200),
     background: cleanText(raw.background, 8_000),
     documents,
     qaPairs,
     preparedQuestions,
+    repository:
+      repository?.repositoryId && repository.snapshotId && repository.repositoryName
+        ? repository
+        : undefined,
     updatedAt: Math.max(0, Number(raw.updatedAt) || 0)
   }
   return preset.topic ||
     preset.background ||
     preset.documents.length ||
     preset.qaPairs.length ||
-    preset.preparedQuestions.length
+    preset.preparedQuestions.length ||
+    preset.repository
     ? preset
     : undefined
 }
@@ -254,6 +270,11 @@ function presetMarkdown(preset: SessionPreset | undefined): string {
   const sections: string[] = ['## 会前预置资料（完整）']
   if (preset.topic) sections.push(`### 会议主题\n\n${preset.topic}`)
   if (preset.background) sections.push(`### 背景与目标\n\n${preset.background}`)
+  if (preset.repository) {
+    sections.push(
+      `### 工作仓库快照\n\n- 仓库：${preset.repository.repositoryName}\n- 分支：${preset.repository.branch}\n- Commit：${preset.repository.commit}\n- 快照：${preset.repository.snapshotId}\n- 工作区状态：${preset.repository.dirty ? '含未提交改动' : '干净'}\n- 索引时间：${new Date(preset.repository.indexedAt).toISOString()}`
+    )
+  }
   if (preset.preparedQuestions.length > 0) {
     sections.push(
       `### 我准备向发言者提出的问题\n\n${preset.preparedQuestions

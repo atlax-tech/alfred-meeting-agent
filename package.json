@@ -1,6 +1,6 @@
 {
   "name": "alfred-ai",
-  "version": "0.2.19",
+  "version": "0.2.23",
   "description": "Alfred AI — 基于个人知识库、个人背景和会议信息提供实时题词与笔记辅助的自用工作会议助手",
   "main": "out/main/index.js",
   "author": "research",
@@ -17,7 +17,8 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "pack:mac": "sh scripts/package-mac.sh",
     "install:mac": "sh scripts/install-mac.sh",
-    "verify:mac-install": "sh scripts/verify-mac-install.sh"
+    "verify:mac-install": "sh scripts/verify-mac-install.sh",
+    "verify:repository-knowledge": "npm run build:electron && ALFRED_REPOSITORY_SELF_TEST=1 electron out/main/index.js"
   },
   "build": {
     "appId": "com.atlax.inview-practice",

@@ -27,6 +27,16 @@ import {
   savePersonalizationProfile,
   upsertPersonalizationEvidence
 } from './personalization'
+import {
+  checkRepositorySnapshotFreshness,
+  indexRepository,
+  listLatestRepositories
+} from './repository-knowledge/indexer'
+import {
+  getRepositoryEvidence,
+  prewarmRepositorySnapshot,
+  retrieveRepositoryContext
+} from './repository-knowledge/retriever'
 import { getMainWindow, updateStealth } from './window'
 import { temporarilyEnableFocus } from './stealth/anti-switch'
 import {
@@ -44,7 +54,12 @@ import {
   updateMentorDelayedCapture,
   unregisterMentorModeShortcuts
 } from './mentor'
-import type { AppConfig, StealthState } from '@shared/types'
+import type {
+  AppConfig,
+  RepositoryIndexRequest,
+  RepositoryRetrievalRequest,
+  StealthState
+} from '@shared/types'
 import type {
   MentorAccessibilityTextOptions,
   WindowResizeOptions
@@ -109,6 +124,7 @@ async function parseReferenceDocument(
 export function registerIpcHandlers(): void {
   // 设置、历史搜索、反馈输入可能嵌套打开。用计数避免内层关闭时过早恢复 noFocus。
   let inputFocusLeaseCount = 0
+  let repositoryIndexAbort: AbortController | null = null
 
   const acquireInputFocus = (): boolean => {
     const win = getMainWindow()
@@ -341,6 +357,73 @@ export function registerIpcHandlers(): void {
     IPC.SESSION_DOCUMENT_PARSE,
     async (_event, data: ArrayBuffer, fileName: string) => {
       return parseReferenceDocument(data, fileName)
+    }
+  )
+
+  ipcMain.handle(IPC.REPOSITORY_SELECT, async () => {
+    const win = getMainWindow()
+    const options: Electron.OpenDialogOptions = {
+      title: '选择会前工作仓库',
+      properties: ['openDirectory']
+    }
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options)
+    return result.canceled ? '' : result.filePaths[0] ?? ''
+  })
+
+  ipcMain.handle(
+    IPC.REPOSITORY_INDEX,
+    async (_event, request: RepositoryIndexRequest) => {
+      if (repositoryIndexAbort) throw new Error('已有仓库正在建立知识索引')
+      const controller = new AbortController()
+      repositoryIndexAbort = controller
+      try {
+        return await indexRepository(request, loadConfig().llm, {
+          signal: controller.signal,
+          onProgress: (value) => {
+            const win = getMainWindow()
+            if (win && !win.isDestroyed()) {
+              win.webContents.send(IPC.REPOSITORY_INDEX_PROGRESS, value)
+            }
+          }
+        })
+      } finally {
+        if (repositoryIndexAbort === controller) repositoryIndexAbort = null
+      }
+    }
+  )
+
+  ipcMain.handle(IPC.REPOSITORY_INDEX_CANCEL, () => {
+    if (!repositoryIndexAbort) return false
+    repositoryIndexAbort.abort()
+    return true
+  })
+
+  ipcMain.handle(IPC.REPOSITORY_LIST, () => listLatestRepositories())
+
+  ipcMain.handle(IPC.REPOSITORY_FRESHNESS, (_event, snapshotId: string) => {
+    return checkRepositorySnapshotFreshness(snapshotId)
+  })
+
+  ipcMain.handle(IPC.REPOSITORY_PREWARM, (_event, snapshotId: string) => {
+    return prewarmRepositorySnapshot(snapshotId)
+  })
+
+  ipcMain.handle(
+    IPC.REPOSITORY_RETRIEVE,
+    (_event, request: RepositoryRetrievalRequest) => {
+      return retrieveRepositoryContext(request)
+    }
+  )
+
+  ipcMain.handle(
+    IPC.REPOSITORY_EVIDENCE,
+    (_event, snapshotId: string, evidenceIds: string[]) => {
+      return getRepositoryEvidence(
+        snapshotId,
+        Array.isArray(evidenceIds) ? evidenceIds : []
+      )
     }
   )
 

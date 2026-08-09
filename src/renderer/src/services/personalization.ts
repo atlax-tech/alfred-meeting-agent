@@ -522,6 +522,7 @@ async function runJsonTask(
       {
         jsonOutput: true,
         thinkingOverride: 'disabled',
+        task: 'offline',
         maxTokensOverride: Math.min(
           llmConfig.maxTokens,
           maxTokensOverride + attempt * 500

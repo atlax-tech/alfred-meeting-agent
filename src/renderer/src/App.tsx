@@ -79,6 +79,7 @@ function MainApp() {
     (state) =>
       Boolean(state.sessionPreset.topic) ||
       Boolean(state.sessionPreset.background) ||
+      Boolean(state.sessionPreset.repository) ||
       state.sessionPreset.documents.length > 0 ||
       state.sessionPreset.preparedQuestions.length > 0 ||
       state.sessionPreset.qaPairs.length > 0

@@ -19,10 +19,12 @@ import type {
   LLMConfig,
   DialogTurn,
   AnswerMode,
+  AnswerStrategyKind,
   DetectedLanguage,
   Region,
   QARecord,
-  ConversationSession
+  ConversationSession,
+  LLMCallPerformance
 } from '@shared/types'
 import {
   chatOnce,
@@ -30,6 +32,7 @@ import {
   type ChatMessage,
   type ResponseLanguage
 } from './llm'
+import { hasCorrectiveQAFeedback } from './answer-strategy'
 
 export interface ExtractResult {
   /** 是否是一个正式提问 */
@@ -47,16 +50,18 @@ export interface ExtractResult {
 }
 
 const DETECTION_CONTEXT_TURNS = 12
-const NORMAL_DIALOG_TURNS = 30
-const NORMAL_QA_PAIRS = 12
-const EXTENDED_CONTEXT_ITEMS = 2000
-const EXTENDED_MATERIAL_CHARS = 300_000
-const EXTENDED_QA_CHARS = 260_000
-const EXTENDED_DIALOG_CHARS = 100_000
-const FEEDBACK_ITEMS = 20
-const FEEDBACK_CHARS = 12_000
+const NORMAL_DIALOG_TURNS = 8
+const NORMAL_QA_PAIRS = 4
+const EXTENDED_CONTEXT_ITEMS = 80
+const EXTENDED_MATERIAL_TOKENS = 40_000
+const EXTENDED_QA_TOKENS = 40_000
+const EXTENDED_DIALOG_TOKENS = 20_000
+const NORMAL_DIALOG_TOKENS = 1_800
+const NORMAL_QA_TOKENS = 2_500
+const FEEDBACK_ITEMS = 12
+const FEEDBACK_TOKENS = 3_000
 const OVERALL_FEEDBACK_ITEMS = 6
-const OVERALL_FEEDBACK_CHARS = 12_000
+const OVERALL_FEEDBACK_TOKENS = 3_000
 
 const LANGUAGE_NAMES: Record<string, string> = {
   zh: 'Simplified Chinese',
@@ -190,7 +195,8 @@ export async function extractQuestion(
   history: DialogTurn[],
   region: Region,
   sessionPresetContext = '',
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  metricsCallback?: (metrics: LLMCallPerformance) => void
 ): Promise<ExtractResult> {
   const messages = buildMessages(
     currentText,
@@ -210,6 +216,8 @@ export async function extractQuestion(
         thinkingOverride: 'disabled',
         // 启用 JSON Output:保证输出合法 JSON
         jsonOutput: true,
+        task: 'extract',
+        metricsCallback,
         // JSON 响应很短,收紧上限加速输出
         maxTokensOverride: 150
       }
@@ -270,25 +278,42 @@ export function looksLikeQaInvitation(text: string): boolean {
 /**
  * 构造答案生成的 system prompt
  */
+function estimateTokens(text: string): number {
+  const han = text.match(/\p{Script=Han}/gu)?.length ?? 0
+  return Math.ceil(han * 0.85 + Math.max(0, text.length - han) / 3.8)
+}
+
+function takeTextWithTokenBudget(text: string, tokenBudget: number): string {
+  if (estimateTokens(text) <= tokenBudget) return text
+  let low = 0
+  let high = text.length
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2)
+    if (estimateTokens(text.slice(0, middle)) <= tokenBudget) low = middle
+    else high = middle - 1
+  }
+  return text.slice(0, low)
+}
+
 function contextText(text: string | undefined, extended: boolean, normalLimit: number): string {
   if (!text?.trim()) return ''
   // 1M 是整个请求的总窗口，不应让单份资料独占全部空间。
-  const limit = extended ? EXTENDED_MATERIAL_CHARS : normalLimit
-  return text.trim().slice(0, limit)
+  const limit = extended ? EXTENDED_MATERIAL_TOKENS : normalLimit
+  return takeTextWithTokenBudget(text.trim(), limit)
 }
 
 function takeRecentWithBudget<T>(
   items: T[],
   limit: number,
-  charBudget: number,
+  tokenBudget: number,
   getText: (item: T) => string
 ): T[] {
   const selected: T[] = []
   let used = 0
   for (let index = items.length - 1; index >= 0 && selected.length < limit; index--) {
     const item = items[index]
-    const size = getText(item).length
-    if (selected.length > 0 && used + size > charBudget) break
+    const size = estimateTokens(getText(item))
+    if (selected.length > 0 && used + size > tokenBudget) break
     selected.push(item)
     used += size
   }
@@ -306,14 +331,14 @@ export function buildAnswerSystemPrompt(
   const languageMeta = getResponseLanguageMeta(language)
   const modeHintZh: Record<AnswerMode, string> = {
     normal: '直接讲清核心逻辑，通常用 2–3 句话，回答到位就停。',
-    concise: '只说最关键的逻辑，通常 2 句话，回答到位就停。',
+    concise: '普通问题只说最关键的逻辑；项目经历和技术探索题仍要用短句补齐必要的场景、机制与验证，不得用“简洁”掩盖信息缺口。',
     algorithm: '先用 2–3 句话讲清思路；只有对方明确要代码时才给代码，再用一句话说明复杂度。',
     'system-design': '只讲核心业务流、数据怎么走以及一个最实际的取舍，最多 5 句话。',
     detailed: '最多 5 句话。每句话补充一个必要信息，不扩写成教程或文章。'
   }
   const modeHintInternational: Record<AnswerMode, string> = {
     normal: 'Explain the core logic in 2–4 short sentences, then stop.',
-    concise: 'Give only the key logic in 1–2 short sentences, then stop.',
+    concise: 'Keep ordinary questions very short. Project-experience and technical-exploration questions still need enough short sentences to cover the real context, mechanism, and validation. Concise must not mean shallow.',
     algorithm: 'Explain the approach in 2–3 short sentences. Provide code only when explicitly requested, then use one sentence for complexity.',
     'system-design': 'Cover the core business flow, how data moves, and one practical trade-off in no more than 5 sentences.',
     detailed: 'Use no more than 5 sentences. Each sentence may add one necessary detail, but never turn the answer into an article.'
@@ -344,7 +369,7 @@ ${modeHintZh[mode]}
 4. 回答结构随问题改变，但注意力、推理习惯、确定性和沟通姿态应遵守后续 Personal Cognitive Voice。
 
 自然口语要求:
-1. 【硬性长度】整个回答默认 2–3 句话，最多 5 句话。回答完核心问题立刻停止，给提问者留下追问空间。
+1. 整个回答默认 2–4 句话。项目经历、情境决策和需要解释机制的技术题可以使用 5–7 个短句，但每句话只补一个必要细节；不要把深度写成长段落。
 2. 一个句子只表达一个重点。优先使用 15–30 个汉字左右的短句，信息多就拆成两个句子，不用分号把多个观点塞在一起。
 3. 使用常见、好懂、能直接说出口的词。避免长定语、长难句、生僻词和书面化表达，不写文章提纲。
 4. 默认不要用标题、编号或项目符号，不写成文章提纲；只有问题本身需要列举、比较、步骤或代码时才适当分点。
@@ -384,7 +409,7 @@ Context-sensitive organization (NEVER use a fixed response template):
 4. Let structure change with the question while preserving the attention, reasoning, uncertainty, and communication posture in the Personal Cognitive Voice below.
 
 Natural spoken style:
-1. HARD LIMIT: Give 2–4 sentences by default and never more than 5 sentences. Stop as soon as the core question is answered. Leave room for follow-up.
+1. Use 2–4 sentences by default. A project experience, situational decision, or technical mechanism may use 5–7 short sentences when that is needed to preserve the evidence chain. Keep every sentence focused; depth must not become a long paragraph.
 2. Put only one main idea in each sentence. Aim for 6–14 words. Treat 18 words as a hard maximum except for an unavoidable code name or technical term.
 3. Split any sentence that needs a semicolon, more than one comma, or a chain of clauses. A short answer is more useful than a polished paragraph.
 4. Think directly in everyday spoken English. Do not translate a formal or Chinese-style sentence into English. Use natural contractions when they make the line easier to say.
@@ -411,14 +436,14 @@ Content boundaries:
 You must answer in ${languageMeta.name} (${languageMeta.code}) only. Even if the conversation history, background material, or reference material contains another language, do not switch languages and do not include a bilingual translation in the main answer. Proper nouns, code, API names, and identifiers may remain in their original form.
 Output the answer directly without introductory filler.`
 
-  const resumeContext = contextText(resume, extendedContext, 4000)
+  const resumeContext = contextText(resume, extendedContext, 1600)
   if (resumeContext) {
     prompt +=
       languageMeta.isChinese
         ? `\n\n学习者的背景资料（项目例子优先从这里选择，但每题只取最相关的一个动作，不要复述整段经历）:\n${resumeContext}`
         : `\n\nLearner background (ground the short project example here when relevant; use only one relevant action and do not retell the full project):\n${resumeContext}`
   }
-  const knowledgeContext = contextText(knowledgeBase, extendedContext, 8000)
+  const knowledgeContext = contextText(knowledgeBase, extendedContext, 2800)
   if (knowledgeContext) {
     prompt +=
       languageMeta.isChinese
@@ -432,13 +457,26 @@ Output the answer directly without introductory filler.`
 /** 短答场景的输出上限，避免模型在满足核心问题后继续扩写。 */
 export function getSpokenAnswerMaxTokens(
   mode: AnswerMode,
-  language: ResponseLanguage
+  language: ResponseLanguage,
+  strategy?: AnswerStrategyKind
 ): number {
   const isEnglish = getResponseLanguageMeta(language).code === 'en'
   const limits: Record<AnswerMode, number> = isEnglish
     ? { normal: 150, concise: 90, algorithm: 800, 'system-design': 220, detailed: 260 }
     : { normal: 280, concise: 180, algorithm: 900, 'system-design': 360, detailed: 420 }
-  return limits[mode]
+  const strategyMinimum =
+    strategy === 'project-scenario'
+      ? isEnglish
+        ? 240
+        : 440
+      : strategy === 'technical-design' ||
+          strategy === 'project-deep-dive' ||
+          strategy === 'project-overview'
+        ? isEnglish
+          ? 210
+          : 380
+        : 0
+  return Math.max(limits[mode], strategyMinimum)
 }
 
 /**
@@ -492,7 +530,7 @@ export function buildAnswerMessages(
   const feedbackText = takeRecentWithBudget(
     recentFeedback.slice().reverse(),
     FEEDBACK_ITEMS,
-    FEEDBACK_CHARS,
+    FEEDBACK_TOKENS,
     (qa) => `${qa.question}\n${qa.feedback ?? ''}`
   )
     .map((qa) => `- ${qa.feedback?.trim()}（来自问题：${qa.question.slice(0, 120)}）`)
@@ -513,7 +551,7 @@ export function buildAnswerMessages(
   const overallFeedbackText = takeRecentWithBudget(
     recentOverallFeedback.slice().reverse(),
     OVERALL_FEEDBACK_ITEMS,
-    OVERALL_FEEDBACK_CHARS,
+    OVERALL_FEEDBACK_TOKENS,
     (session) => session.overallFeedback ?? ''
   )
     .map((session) => `- ${session.overallFeedback?.trim()}`)
@@ -533,7 +571,7 @@ export function buildAnswerMessages(
   const recentDialog = takeRecentWithBudget(
     eligibleDialog,
     itemLimit,
-    extendedContext ? EXTENDED_DIALOG_CHARS : 30_000,
+    extendedContext ? EXTENDED_DIALOG_TOKENS : NORMAL_DIALOG_TOKENS,
     (turn) => turn.text
   )
   const qaLimit = extendedContext ? EXTENDED_CONTEXT_ITEMS : NORMAL_QA_PAIRS
@@ -544,12 +582,15 @@ export function buildAnswerMessages(
   const recentQA = takeRecentWithBudget(
     eligibleQA,
     qaLimit,
-    extendedContext ? EXTENDED_QA_CHARS : 60_000,
+    extendedContext ? EXTENDED_QA_TOKENS : NORMAL_QA_TOKENS,
     (qa) => `${qa.question}\n${qa.answer}`
   )
 
   // 把模型之前的真实回答也放回消息序列，才能保持前后口径一致。
   for (const qa of recentQA) {
+    // 已被用户纠正的答案不是对话事实。反馈会通过高优先级指令单独进入，
+    // 这里不再把旧答案作为 assistant 示例喂回模型，避免只做表面改写。
+    if (hasCorrectiveQAFeedback(qa)) continue
     messages.push({ role: 'user', content: qa.question })
     messages.push({ role: 'assistant', content: qa.answer })
   }
@@ -602,13 +643,13 @@ export function buildContextCompressionMessages(
   const dialogForCompression = takeRecentWithBudget(
     dialogHistory,
     EXTENDED_CONTEXT_ITEMS,
-    120_000,
+    30_000,
     (turn) => turn.text
   )
   const qaForCompression = takeRecentWithBudget(
     qaHistory.slice().reverse(),
     EXTENDED_CONTEXT_ITEMS,
-    420_000,
+    100_000,
     (item) => `${item.question}\n${item.answer}\n${item.feedback ?? ''}`
   )
   const transcript = dialogForCompression
@@ -633,6 +674,28 @@ export function buildContextCompressionMessages(
     {
       role: 'user',
       content: `${previousSummary ? `已有摘要:\n${previousSummary.slice(0, 100_000)}\n\n` : ''}${overallFeedback ? `整轮对话反馈:\n${overallFeedback.slice(0, 6000)}\n\n` : ''}现场转写:\n${transcript || '无'}\n\n历史问答与反馈:\n${qa || '无'}`
+    }
+  ]
+}
+
+/** 为混合模式下的非中文问题生成独立中文翻译请求。 */
+export function buildQuestionTranslationMessages(
+  question: string,
+  sourceLanguage: DetectedLanguage
+): ChatMessage[] {
+  return [
+    {
+      role: 'system',
+      content: `你是专业翻译。请把下面的 ${sourceLanguage.name} 问题准确翻译成简体中文。
+
+要求:
+1. 忠实保留问题原意、技术术语、专有名词、代码、API 名称和标识符。
+2. 不要回答、解释、总结、点评或补充问题。
+3. 只输出中文译文,不要重复原文,不要添加“翻译如下”等引导语。`
+    },
+    {
+      role: 'user',
+      content: `待翻译的原语言问题:\n<source_question>\n${question}\n</source_question>`
     }
   ]
 }

@@ -521,7 +521,6 @@ async function runJsonTask(
       signal,
       {
         jsonOutput: true,
-        thinkingOverride: 'disabled',
         task: 'offline',
         maxTokensOverride: Math.min(
           llmConfig.maxTokens,

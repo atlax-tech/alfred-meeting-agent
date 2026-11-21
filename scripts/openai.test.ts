@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { apiEndpoint, buildOpenAIRequest, httpAPIError, readOpenAIResponse } from '@shared/openai'
 import { DEFAULT_CONFIG } from '@shared/types'
 import { chatOnce, testLLMConnection } from '../src/renderer/src/services/llm'
+import { extractQuestion } from '../src/renderer/src/services/question-detector'
 
 const config = { ...DEFAULT_CONFIG.llm, baseURL: 'https://example.test', apiKey: 'test-secret', model: 'test-model' }
 const messages = [{ role: 'user' as const, content: 'Reply OK.' }]
@@ -30,10 +31,30 @@ test('optional parameters are opt-in; reasoning and token limits map to the sele
   assert.deepEqual(responses.reasoning, { effort: 'none' })
   assert.deepEqual(responses.text, { format: { type: 'json_object' } })
   assert.equal('max_tokens' in responses, false)
-  const reasoning = buildOpenAIRequest({ ...config, thinking: 'enabled', reasoningEffort: 'high', tokenLimitField: 'max_completion_tokens', sendTemperature: true }, messages, { thinkingOverride: 'disabled' }).body
-  assert.equal(reasoning.reasoning_effort, 'none')
+  const reasoning = buildOpenAIRequest({ ...config, thinking: 'enabled', reasoningEffort: 'high', tokenLimitField: 'max_completion_tokens', sendTemperature: true }, messages).body
+  assert.equal(reasoning.reasoning_effort, 'high')
   assert.equal(reasoning.max_completion_tokens, 4096)
   assert.equal(reasoning.temperature, 0.3)
+})
+
+test('question extraction follows the configured reasoning setting in English and Chinese', async (t) => {
+  for (const [language, question] of [['en', 'How do we decide what to ship?'], ['zh', '我们如何决定发布哪些改动？']] as const) {
+    for (const thinking of ['enabled', 'disabled'] as const) {
+      await t.test(`${language}, custom reasoning ${thinking}`, async (t) => {
+        t.mock.method(globalThis, 'fetch', async (_url, init) => {
+          const body = JSON.parse(String(init?.body))
+          if (thinking === 'enabled') assert.deepEqual(body.reasoning, { effort: 'low' })
+          else assert.equal('reasoning' in body, false)
+          const text = JSON.stringify({ isQuestion: true, isComplete: true, question })
+          return Response.json({ output: [{ type: 'message', content: [{ type: 'output_text', text }] }] })
+        })
+
+        const result = await extractQuestion({ ...config, apiFormat: 'responses', thinking, reasoningEffort: 'low' }, question, [], language)
+        assert.equal(result.question, question)
+        assert.equal(result.isComplete, true)
+      })
+    }
+  }
 })
 
 test('Chat SSE handles UTF-8 split at every byte, CRLF, usage and final event without newline', async () => {

@@ -231,7 +231,7 @@ async function callJson(
             }
           ]
       const request = buildOpenAIRequest({ ...config, model, maxTokens: Math.min(Math.max(config.maxTokens, 4096), 6000) }, retryMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>, {
-        stream: false, jsonOutput: true, thinkingOverride: 'disabled'
+        stream: false, jsonOutput: true
       })
       const response = await net.fetch(request.url, {
         method: 'POST',

@@ -122,7 +122,6 @@ Rules:
 
   try {
     const raw = await chatOnce(llmConfig, messages, signal, {
-      thinkingOverride: 'disabled',
       jsonOutput: true,
       task: 'extract',
       metricsCallback,
@@ -235,9 +234,7 @@ function buildMessages(
 /**
  * 从一段识别文本中提取正式提问
  *
- * 优化:使用 JSON Output + 关闭思考模式
- *  - 问题提取是简单判断任务,不需要思维链,关闭思考可大幅降低延迟
- *  - JSON Output 保证输出结构合法,避免解析失败
+ * 使用 JSON Output 约束输出结构，降低解析失败的概率。
  */
 export async function extractQuestion(
   llmConfig: LLMConfig,
@@ -262,8 +259,6 @@ export async function extractQuestion(
       messages,
       signal,
       {
-        // 强制关闭思考:问题提取要快,毫秒级响应
-        thinkingOverride: 'disabled',
         // 启用 JSON Output:保证输出合法 JSON
         jsonOutput: true,
         task: 'extract',

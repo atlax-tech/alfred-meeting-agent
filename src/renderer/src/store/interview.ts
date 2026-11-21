@@ -1743,7 +1743,6 @@ ${contextualMessage}`
           buildContentTranslationMessages(analysisText, detectedLanguage),
           controller.signal,
           {
-            thinkingOverride: 'disabled',
             responseLanguage: 'zh',
             task: 'translation',
             maxTokensOverride: 2000
@@ -1955,7 +1954,6 @@ ${contextualMessage}`
         },
         controller.signal,
         {
-          thinkingOverride: 'disabled',
           responseLanguage: 'zh',
           task: 'translation'
         }
@@ -2440,7 +2438,6 @@ ${contextualMessage}`
         ),
         controller.signal,
         {
-          thinkingOverride: 'disabled',
           responseLanguage: 'zh',
           task: 'compression'
         }
@@ -2972,7 +2969,6 @@ async function handleFinalTranscript(
         buildQuestionTranslationMessages(question, result.detectedLanguage),
         controller.signal,
         {
-          thinkingOverride: 'disabled',
           responseLanguage: 'zh',
           task: 'translation',
           maxTokensOverride: 500,
@@ -3137,7 +3133,6 @@ async function handleFinalTranscript(
       },
       controller.signal,
       {
-        thinkingOverride: 'disabled',
         responseLanguage: 'zh',
         task: 'translation',
         metricsCallback: (metrics) => callMetrics.push(metrics)

@@ -1,6 +1,6 @@
 {
   "name": "alfred-ai",
-  "version": "0.2.23",
+  "version": "0.2.28",
   "description": "Alfred AI — 基于个人知识库、个人背景和会议信息提供实时题词与笔记辅助的自用工作会议助手",
   "main": "out/main/index.js",
   "author": "research",
@@ -12,6 +12,8 @@
     "dev:electron": "sh scripts/build-mouse-idle.sh && sh scripts/build-vision-ocr.sh && sh scripts/build-liquid-glass.sh && electron-vite dev",
     "start": "electron-vite preview",
     "preview": "electron-vite preview",
+    "test:answers": "node scripts/test-answers.mjs",
+    "test:openai": "node scripts/test-openai.mjs",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",

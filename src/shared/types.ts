@@ -41,16 +41,22 @@ export interface LLMConfig {
   baseURL: string
   /** API Key */
   apiKey: string
-  /** 模型名,如 deepseek-v4-flash */
+  /** 服务端提供的模型 ID */
   model: string
-  /** 采样温度(思考模式下不生效,但保留字段) */
+  /** 采样温度，仅 sendTemperature 开启时发送 */
   temperature: number
   /** 单次最大 tokens */
   maxTokens: number
-  /** 思考模式开关(DeepSeek v4 系列):enabled / disabled */
+  /** 是否发送 OpenAI 思考程度参数；保留旧字段名以兼容配置 */
   thinking: 'enabled' | 'disabled'
-  /** 思考强度(仅 thinking=enabled 时生效):high / max */
-  reasoningEffort: 'high' | 'max'
+  /** 服务端支持的 effort；none 表示显式关闭，具体支持值由模型决定 */
+  reasoningEffort: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  /** OpenAI 两种标准请求协议，不按厂商名称分支 */
+  apiFormat?: 'chat' | 'responses'
+  /** Chat Completions 的输出上限字段 */
+  tokenLimitField?: 'max_tokens' | 'max_completion_tokens'
+  /** 默认不发送可选采样参数，避免不支持该参数的模型拒绝请求 */
+  sendTemperature?: boolean
   /** 使用模型的大上下文窗口，尽量携带完整会话、简历和知识库 */
   millionContextEnabled: boolean
   /** 可选轻量模型；留空时与主模型相同，用于问题提取等短任务。 */
@@ -684,23 +690,19 @@ export function createEmptyPersonalizationProfile(): PersonalizationProfile {
   }
 }
 
-/** 默认配置(DeepSeek v4-flash 最佳实践) */
+/** 默认配置；已有用户配置由持久化层合并保留。 */
 export const DEFAULT_CONFIG: AppConfig = {
   llm: {
-    // DeepSeek 官方 OpenAI 兼容端点(不带 /v1,DeepSeek 同时兼容 /v1 路径)
-    baseURL: 'https://api.deepseek.com',
+    baseURL: 'https://api.openai.com/v1',
     apiKey: '',
-    // v4-flash:快速、成本低,适合实时语音对话场景
-    model: 'deepseek-v4-flash',
-    // 思考模式下 temperature 不生效;非思考模式建议 0.3(更确定、结构化)
+    model: '',
     temperature: 0.3,
-    // 4096 保证系统设计/详细模式答案不被截断(flash 最大输出 384K)
     maxTokens: 4096,
-    // 默认关闭思考模式:实时对话场景速度优先,flash 本身够快够准
-    // 复杂问题(算法/系统设计等)可在设置面板临时开启
     thinking: 'disabled',
-    // 若开启思考,high 是性价比最优;max 更准但更慢
-    reasoningEffort: 'high',
+    reasoningEffort: 'medium',
+    apiFormat: 'chat',
+    tokenLimitField: 'max_tokens',
+    sendTemperature: false,
     millionContextEnabled: false,
     fastModel: '',
     reviewModel: '',

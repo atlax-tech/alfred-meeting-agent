@@ -116,6 +116,8 @@ function MainApp() {
   const [meetingNotesOpen, setMeetingNotesOpen] = useState(false)
 
   const contentRef = useRef<HTMLDivElement>(null)
+  const contentBodyRef = useRef<HTMLDivElement>(null)
+  const contentActionsRef = useRef<HTMLDivElement>(null)
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastWindowHeightRef = useRef<number | null>(null)
 
@@ -171,7 +173,9 @@ function MainApp() {
       return
     }
 
-    const contentHeight = contentRef.current?.getBoundingClientRect().height ?? 0
+    const bodyHeight = contentBodyRef.current?.scrollHeight ?? 0
+    const actionsHeight = contentActionsRef.current?.getBoundingClientRect().height ?? 0
+    const contentHeight = bodyHeight + actionsHeight
     resizeWindow(BAR_HEIGHT + Math.min(MAX_CONTENT_HEIGHT, contentHeight))
   }, [expanded, panelOpen, resizeWindow])
 
@@ -223,13 +227,15 @@ function MainApp() {
   }, [resizeToContent])
 
   useEffect(() => {
-    const content = contentRef.current
-    if (!content) return
+    const body = contentBodyRef.current
+    const actions = contentActionsRef.current
+    if (!body || !actions) return
 
     const observer = new ResizeObserver(() => {
       if (expanded && !panelOpen) resizeToContent()
     })
-    observer.observe(content)
+    observer.observe(body)
+    observer.observe(actions)
     return () => observer.disconnect()
   }, [expanded, panelOpen, resizeToContent])
 
@@ -276,11 +282,9 @@ function MainApp() {
 
   return (
     <div
-      className={`app-glass relative min-h-[40px] overflow-hidden rounded-xl border border-white/40 bg-bg text-slate-100 ${
-        panelOpen ? 'h-screen' : ''
-      }`}
+      className="app-glass relative flex h-full min-h-[40px] flex-col overflow-hidden rounded-xl border border-white/40 bg-bg text-slate-100"
     >
-      <header className="bubble-drag flex h-10 select-none items-center gap-2 px-3">
+      <header className="bubble-drag flex h-10 shrink-0 select-none items-center gap-2 px-3">
         <div className="flex min-w-[104px] shrink-0 items-center gap-2">
           <span
             className={`h-2.5 w-2.5 rounded-full ${statusMeta.color} ${
@@ -416,7 +420,7 @@ function MainApp() {
         <div
           className="bubble-no-drag flex shrink-0 items-center rounded-md bg-bg-card p-0.5"
           role="group"
-          aria-label="回答语言"
+          aria-label="问答与 Mentor 回答语言"
         >
           {LANGUAGE_OPTIONS.map((option) => (
             <button
@@ -472,98 +476,105 @@ function MainApp() {
         aria-hidden={!expanded || mentorPanelOpen}
         className={`border-t border-slate-700/60 bg-transparent transition-[max-height,opacity] duration-200 ease-out ${
           expanded && !mentorPanelOpen
-            ? 'max-h-[400px] overflow-y-auto opacity-100'
-            : 'pointer-events-none max-h-0 overflow-hidden opacity-0'
+            ? 'min-h-0 flex-1 overflow-y-auto opacity-100'
+            : 'pointer-events-none max-h-0 flex-none overflow-hidden opacity-0'
         }`}
       >
-        <MeetingQAPanel />
-        <CurrentQA />
+        <div className="flex min-h-full flex-col">
+          <div ref={contentBodyRef}>
+            <MeetingQAPanel />
+            <CurrentQA />
 
-        {recordCount > 0 ? (
-          <details className="mx-3 mb-2 overflow-hidden rounded-lg border border-bg-hover bg-bg/40">
-            <summary className="bubble-no-drag cursor-pointer px-3 py-2 text-[11px] text-slate-400 hover:text-white">
-              本轮记录（{recordCount}）
-            </summary>
-            <div className="h-48 border-t border-bg-hover">
-              <HistoryList />
-            </div>
-          </details>
-        ) : null}
+            {recordCount > 0 ? (
+              <details className="mx-3 mb-2 overflow-hidden rounded-lg border border-bg-hover bg-bg/40">
+                <summary className="bubble-no-drag cursor-pointer px-3 py-2 text-[11px] text-slate-400 hover:text-white">
+                  本轮记录（{recordCount}）
+                </summary>
+                <div className="h-48 border-t border-bg-hover">
+                  <HistoryList />
+                </div>
+              </details>
+            ) : null}
+          </div>
 
-        <div className="sticky bottom-0 flex items-center gap-1 border-t border-bg-hover bg-bg-panel px-3 py-2 backdrop-blur">
-          <button
-            type="button"
-            onClick={copyAnswer}
-            disabled={!currentAnswer}
-            className="rounded px-2 py-1 text-[11px] text-slate-400 transition hover:bg-bg-hover hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
-            title="复制答案（Command+Shift+C）"
+          <div
+            ref={contentActionsRef}
+            className="sticky bottom-0 mt-auto flex items-center gap-1 border-t border-bg-hover bg-bg-panel px-3 py-2 backdrop-blur"
           >
-            复制
-          </button>
-          <button
-            type="button"
-            onClick={startNewConversation}
-            disabled={busy}
-            className="rounded px-2 py-1 text-[11px] text-slate-400 transition hover:bg-bg-hover hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
-            title="保留本轮历史并开始新对话"
-          >
-            新对话
-          </button>
-          <button
-            type="button"
-            onClick={() => void compressContext()}
-            disabled={!hasContext || busy}
-            className="rounded px-2 py-1 text-[11px] text-slate-400 transition hover:bg-bg-hover hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
-            title="将当前上下文压缩为摘要，不删除历史记录"
-          >
-            压缩
-          </button>
-          <button
-            type="button"
-            onClick={() => setHistoryPanelOpen(true)}
-            className="rounded px-2 py-1 text-[11px] text-slate-400 transition hover:bg-bg-hover hover:text-white"
-            title="查看历史对话与整轮反馈"
-          >
-            历史{historyCount > 0 ? `(${historyCount})` : ''}
-          </button>
-          <button
-            type="button"
-            onClick={() => setHistoryPanelOpen(true)}
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-bg-hover hover:text-accent-glow"
-            title="整轮反馈"
-            aria-label="打开整轮反馈"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              className="h-3.5 w-3.5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
+            <button
+              type="button"
+              onClick={copyAnswer}
+              disabled={!currentAnswer}
+              className="rounded px-2 py-1 text-[11px] text-slate-400 transition hover:bg-bg-hover hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+              title="复制答案（Command+Shift+C）"
             >
-              <path d="M5 4h14v12H8l-3 3z" />
-              <path d="M8 8h8M8 12h5" />
-            </svg>
-          </button>
-          <span className="flex-1" />
-          <button
-            type="button"
-            onClick={clearCurrent}
-            className="rounded px-2 py-1 text-[11px] text-slate-500 transition hover:bg-danger/10 hover:text-danger"
-            title="清空当前问题和答案"
-          >
-            清空当前
-          </button>
-          <button
-            type="button"
-            onClick={clearHistory}
-            className="rounded px-2 py-1 text-[11px] text-slate-500 transition hover:bg-danger/10 hover:text-danger"
-            title="清空本轮全部问答与对话记录"
-          >
-            清空历史
-          </button>
+              复制
+            </button>
+            <button
+              type="button"
+              onClick={startNewConversation}
+              disabled={busy}
+              className="rounded px-2 py-1 text-[11px] text-slate-400 transition hover:bg-bg-hover hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+              title="保留本轮历史并开始新对话"
+            >
+              新对话
+            </button>
+            <button
+              type="button"
+              onClick={() => void compressContext()}
+              disabled={!hasContext || busy}
+              className="rounded px-2 py-1 text-[11px] text-slate-400 transition hover:bg-bg-hover hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+              title="将当前上下文压缩为摘要，不删除历史记录"
+            >
+              压缩
+            </button>
+            <button
+              type="button"
+              onClick={() => setHistoryPanelOpen(true)}
+              className="rounded px-2 py-1 text-[11px] text-slate-400 transition hover:bg-bg-hover hover:text-white"
+              title="查看历史对话与整轮反馈"
+            >
+              历史{historyCount > 0 ? `(${historyCount})` : ''}
+            </button>
+            <button
+              type="button"
+              onClick={() => setHistoryPanelOpen(true)}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-bg-hover hover:text-accent-glow"
+              title="整轮反馈"
+              aria-label="打开整轮反馈"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M5 4h14v12H8l-3 3z" />
+                <path d="M8 8h8M8 12h5" />
+              </svg>
+            </button>
+            <span className="flex-1" />
+            <button
+              type="button"
+              onClick={clearCurrent}
+              className="rounded px-2 py-1 text-[11px] text-slate-500 transition hover:bg-danger/10 hover:text-danger"
+              title="清空当前问题和答案"
+            >
+              清空当前
+            </button>
+            <button
+              type="button"
+              onClick={clearHistory}
+              className="rounded px-2 py-1 text-[11px] text-slate-500 transition hover:bg-danger/10 hover:text-danger"
+              title="清空本轮全部问答与对话记录"
+            >
+              清空历史
+            </button>
+          </div>
         </div>
       </div>
 

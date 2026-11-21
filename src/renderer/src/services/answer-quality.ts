@@ -1,3 +1,4 @@
+import { answerCoachingInstructions, findAnswerCoachingIssues, findChineseSpokenStyleIssues } from '@shared/answer-coaching'
 import type {
   AnswerConfidence,
   AnswerStrategyKind,
@@ -36,6 +37,7 @@ interface ReviewAnswerOptions {
   subject: string
   draftAnswer: string
   evidence?: string
+  referenceInstructions?: string
   inputQuality?: InputQuality
   recheckRequested?: boolean
   responseLanguage?: ResponseLanguage
@@ -144,12 +146,6 @@ function compact(value: string): string {
   return value.normalize('NFKC').toLocaleLowerCase().replace(/[^a-z0-9\p{Script=Han}]+/gu, '')
 }
 
-function contentTokens(value: string): Set<string> {
-  const words = value.normalize('NFKC').toLocaleLowerCase()
-    .match(/[a-z][a-z0-9_-]{3,}/gu) ?? []
-  return new Set(words.filter((word) => !DEPTH_STOP_WORDS.has(word)))
-}
-
 function distinctiveEvidencePhrases(context: RetrievedRepositoryContext): string[] {
   const phrases = [
     context.repositoryName,
@@ -184,7 +180,7 @@ export function findAnswerDepthIssues(
   const issues: string[] = []
   const sentences = answer
     .replace(/```[\s\S]*?```/gu, ' ')
-    .split(/(?<=[.!?。！？])\s+|\n+/gu)
+    .split(/(?<=[。！？])\s*|(?<=[.!?])\s+|\n+/gu)
     .map((item) => item.trim())
     .filter(Boolean)
   if (strategy === 'project-scenario' && sentences.length < 4) {
@@ -204,17 +200,16 @@ export function findAnswerDepthIssues(
     if (!hasAnchor) {
       issues.push(`The answer never anchors itself in ${repositoryContext.repositoryName} or a concrete module from the retrieved evidence.`)
     }
-
-    const evidenceTokens = contentTokens(
-      repositoryContext.evidence
-        .map((item) => `${item.title}\n${item.content}`)
-        .join('\n')
-    )
-    const answerTokens = contentTokens(answer)
-    const shared = [...answerTokens].filter((token) => evidenceTokens.has(token))
-    if (shared.length < 2) {
-      issues.push('Fewer than two specific answer terms are traceable to the current repository evidence; the response reads as a generic story.')
+    const lead = compact(sentences.slice(0, 2).join(' '))
+    const hasEarlyAnchor = phrases.some((phrase) => {
+      const normalized = compact(phrase)
+      return normalized.length >= 4 && lead.includes(normalized)
+    })
+    if (!hasEarlyAnchor) {
+      issues.push(`The answer does not establish ${repositoryContext.repositoryName} or one of its concrete modules in the opening; the bound project must lead the narrative.`)
     }
+
+
   }
 
   const firstPersonClaim = /\bI\s+(?:built|designed|implemented|changed|added|tested|shipped|decided|chose|used|created|fixed)\b|我(?:设计|实现|修改|增加|测试|交付|决定|选择|创建|修复)/iu.test(answer)
@@ -315,7 +310,7 @@ export function parseAnswerReview(raw: string, draftAnswer: string): AnswerRevie
   }
 }
 
-function buildReviewMessages(options: ReviewAnswerOptions): ChatMessage[] {
+export function buildReviewMessages(options: ReviewAnswerOptions): ChatMessage[] {
   const languageMeta = options.responseLanguage
     ? getResponseLanguageMeta(options.responseLanguage)
     : null
@@ -353,6 +348,7 @@ function buildReviewMessages(options: ReviewAnswerOptions): ChatMessage[] {
     : options.answerStrategy === 'technical-design' || options.answerStrategy === 'project-deep-dive'
       ? 6
       : 5
+  const chineseSpokenAnswer = options.scope === 'qa' && (languageMeta?.isChinese ?? /[\u4e00-\u9fff]/u.test(options.draftAnswer))
   const spokenStyleRule = englishSpokenAnswer
     ? `The finalAnswer will be spoken aloud. It must sound like a native English-speaking engineer answering a teammate, not like a document or a translated essay.
 - Give the direct answer first. Use one clear situation and action for “how”, “why”, or experience questions when evidence supports it.
@@ -361,15 +357,43 @@ function buildReviewMessages(options: ReviewAnswerOptions): ChatMessage[] {
 - Use common words and plain verbs. Remove abstract framing, noun-heavy phrases, business wording, essay transitions, and stacked jargon.
 - Form the answer directly in natural spoken English. Do not preserve translation-like wording from the draft or evidence.
 - Do not add headings or lists unless the question explicitly needs steps, a comparison, or code.`
-    : 'Preserve the draft\'s appropriate level of concision and natural wording.'
+    : chineseSpokenAnswer
+      ? '中文finalAnswer是面对面面试答复，不是技术报告。复核正确性后，还要把名词串、长定语、多层并列和提纲腔改成用户在讲具体动作、原因和判断的口头表达。用有语义作用的连接语承接，保留准确术语与项目细节；不要通过增加字数、方法清单或结尾总结显得专业，也不要硬塞语气词。参考材料提供知识和事实，不提供要照搬的书面句式。内部可以全面核查，正文不必罗列所有检查项；保留当前问题的重点与一个支撑，不把短稿扩写成全景项目汇报。执行后面的中文口头表达要求和风格对照。'
+      : 'Preserve the draft\'s appropriate level of concision and natural wording.'
   const correctionRule = options.spokenStyleCorrection?.length
-    ? `A previous finalAnswer failed the local spoken-English gate. Fix every issue below while independently preserving factual accuracy:\n${options.spokenStyleCorrection.map((issue) => `- ${issue}`).join('\n')}`
+    ? `A previous finalAnswer needs a spoken-style revision. Fix every issue below while independently preserving factual accuracy:\n${options.spokenStyleCorrection.map((issue) => `- ${issue}`).join('\n')}`
     : 'No local spoken-style correction was requested.'
   const depthCorrectionRule = options.scenarioDepthCorrection?.length
     ? `A previous finalAnswer failed the local project/technical depth gate. Re-solve from the supplied evidence instead of polishing the same generic story. Fix every issue below while keeping short spoken sentences:\n${options.scenarioDepthCorrection.map((issue) => `- ${issue}`).join('\n')}`
     : 'No local depth correction was requested.'
+  const repositoryFocusRule = options.scope === 'qa' && options.repositoryContext
+    ? `This session is explicitly bound to ${options.repositoryContext.repositoryName}. For a project example, overview, architecture, workflow, trade-off, failure, progress, or result, make this bound project the main narrative and establish it in the opening. Projects found only in the resume, prior answers, or personalization may receive at most a one-sentence supporting comparison. Expand another project only when the subject names it, asks for a multi-project comparison, or the bound evidence cannot answer a key part; in that last case, state the evidence gap before switching. Repository evidence still does not prove first-person ownership.`
+    : 'No repository is explicitly bound to this review.'
 
-  const system = `You are the final accuracy reviewer. Do not trust or merely rewrite the draft: solve the subject independently first, then compare the draft against your result.
+  const system = options.scope === 'qa'
+    ? `You are the user's professional answer editor. Improve the draft from the user's first-person perspective. Check technical correctness, relevance, concrete mechanisms, clarity, and persuasive expression; do not act as an outside auditor of the user's identity or project ownership.
+
+The user has supplied these projects as personal experience. Accept their explicit ownership statements and supplied personal background. Source files need not repeat who authored each component. The user's "I" is the user, never the language model.
+
+Keep a useful draft's substance and strengthen the weak parts. Develop one coherent project case with specific inputs, actions, state changes, choices and checks. Where the user permits constructed practice scenarios, develop a technically plausible practice case within the project's context. Generated details remain practice drafts, not confirmed biography. Avoid invented metrics, external-company internals and impressive-sounding scale.
+
+Use the session references as well as project implementation. Integrate a relevant method, trade-off, business connection or acceptance criterion from the references into the concrete project answer; a generic answer that ignores relevant supplied material needs improvement. Keep the source-selection work internal.
+
+When material is sparse, give the concrete project-grounded solution rather than a lack-of-evidence paragraph. A bound repository is the main example unless the question names another project; the missing authorship line is not a reason to disclaim personal contribution. Do not replace a professional answer with a lecture on what the user cannot prove.
+
+${languageRule}
+${spokenStyleRule}
+${personalizationRule}
+${options.feedbackInstructions ? `Apply the user's corrective feedback silently:\n${options.feedbackInstructions}` : ''}
+${options.scenarioDepthCorrection?.length ? `Improve these points with substantive details, not a refusal:\n${options.scenarioDepthCorrection.join('\n')}` : ''}
+${correctionRule}
+
+${answerCoachingInstructions(languageMeta?.isChinese ?? true)}
+
+Return exactly one JSON object:
+{"verdict":"pass|corrected|insufficient","confidence":"high|medium|low","finalAnswer":"the complete improved first-person answer","note":"brief technical/editing note, separate from the answer","sampleValidation":[]}
+The note is optional editorial metadata, never a challenge to personal ownership. Mark a missing technical premise internally and write the most useful concrete answer. Project documentation not restating the user's role is not an insufficient verdict. Keep sampleValidation empty for non-algorithm questions.`
+    : `You are the final accuracy reviewer. Do not trust or merely rewrite the draft: solve the subject independently first, then compare the draft against your result.
 
 Accuracy rules, in priority order:
 1. Check whether the answer actually addresses the subject and whether every central factual, technical, mathematical, logical, option-selection, code, and complexity claim is correct.
@@ -385,11 +409,12 @@ Accuracy rules, in priority order:
 11. For greedy algorithms, binary search on the answer, or a feasibility check, verify the needed exchange argument or monotonicity instead of relying on a familiar template. XOR is not monotone when an interval is extended, so sum-like greedy reasoning cannot be assumed.
 12. ${recheckRule}
 13. ${feedbackRule}
-14. ${depthRule}
-15. ${personalizationRule}
-16. ${spokenStyleRule}
-17. ${correctionRule}
-18. ${depthCorrectionRule}
+14. ${repositoryFocusRule}
+15. ${depthRule}
+16. ${personalizationRule}
+17. ${spokenStyleRule}
+18. ${correctionRule}
+19. ${depthCorrectionRule}
 
 ${scopeLabel}
 
@@ -419,7 +444,7 @@ ${options.subject.trim().slice(0, REVIEW_SOURCE_LIMIT)}
 <input_quality>${options.inputQuality ?? 'high'}</input_quality>
 <recheck_requested>${options.recheckRequested === true}</recheck_requested>
 
-${evidence ? `<supporting_evidence>\n${evidence}\n</supporting_evidence>\n\n` : ''}<draft_answer>
+${options.referenceInstructions ? `<session_reference_material>\n${options.referenceInstructions}\n</session_reference_material>\n\n` : ''}${evidence ? `<supporting_evidence>\n${evidence}\n</supporting_evidence>\n\n` : ''}<draft_answer>
 ${options.draftAnswer.trim().slice(0, REVIEW_ANSWER_LIMIT)}
 </draft_answer>`
 
@@ -502,25 +527,20 @@ function blockedSourceCaseAnswer(
   }
 }
 
-function evidenceLimitedScenarioAnswer(
-  options: ReviewAnswerOptions,
-  issues: string[]
-): AnswerReview {
-  const language = options.responseLanguage
-    ? getResponseLanguageMeta(options.responseLanguage)
-    : null
-  const project = options.repositoryContext?.repositoryName
-  const finalAnswer = language?.isChinese
-    ? `${project ? `当前 ${project} 的项目证据` : '当前资料'}不足以支持一个具体的第一人称案例，我不会补写经历。我要先区分已知事实和最关键的未知项。然后只做一个可回退、能验证该未知项的动作。行动前先定义继续、调整和停止的判断条件。拿到新证据后，再决定扩大、修改还是回滚。`
-    : `${project ? `The current ${project} evidence` : 'The current material'} does not support a specific first-person case, so I would not invent one. I would separate the confirmed facts from the key unknown. Then I would take one reversible action that tests that unknown. Before acting, I would define clear continue, adjust, and stop conditions. The new evidence would decide whether I expand, change, or roll back.`
-  return {
-    finalAnswer,
-    confidence: 'low',
-    verified: false,
-    corrected: true,
-    note: `项目场景深度门禁未通过，已阻止空泛或无法由证据支持的经历：${issues[0]?.slice(0, 120) ?? '缺少具体证据'}`,
-    sampleValidation: []
+function retainUsefulQaDraft(options: ReviewAnswerOptions, reviewed: AnswerReview): AnswerReview {
+  if (findAnswerCoachingIssues(reviewed.finalAnswer).length === 0) return reviewed
+  if (options.scope === 'qa' && findAnswerCoachingIssues(options.draftAnswer).length === 0) {
+    return {
+      ...reviewed,
+      finalAnswer: options.draftAnswer.trim(),
+      verified: false,
+      corrected: false,
+      confidence: 'unverified',
+      note: '保留原答复；表达优化结果未采用',
+      sampleValidation: []
+    }
   }
+  return reviewed
 }
 
 async function requestReview(
@@ -583,14 +603,20 @@ export function canSkipQaReview(
   subject: string,
   draftAnswer: string,
   repositoryContext: RetrievedRepositoryContext | null,
-  responseLanguage: ResponseLanguage
+  responseLanguage: ResponseLanguage,
+  answerStrategy?: AnswerStrategyKind
 ): boolean {
   if (llmConfig.adaptiveReviewEnabled !== true) return false
+  if (findAnswerCoachingIssues(draftAnswer).length > 0) return false
+  if (getResponseLanguageMeta(responseLanguage).isChinese && findChineseSpokenStyleIssues(draftAnswer).length > 0) return false
   if (!repositoryContext || repositoryContext.stale) return false
   if (repositoryContext.confidence !== 'high' || repositoryContext.evidence.length === 0) return false
   if (HIGH_RISK_QA_PATTERN.test(subject) || CODE_OR_NUMBER_PATTERN.test(draftAnswer)) return false
   if (FIRST_PERSON_ACTION_PATTERN.test(draftAnswer)) return false
   if (hasUnsupportedIdentifiers(draftAnswer, repositoryContext)) return false
+  if (findAnswerDepthIssues(subject, draftAnswer, answerStrategy, repositoryContext).length > 0) {
+    return false
+  }
   if (draftAnswer.length > 900) return false
   if (
     getResponseLanguageMeta(responseLanguage).code === 'en' &&
@@ -629,43 +655,47 @@ export async function reviewAnswer(options: ReviewAnswerOptions): Promise<Answer
       : options.answerStrategy === 'technical-design' || options.answerStrategy === 'project-deep-dive'
         ? 6
         : 5
+    const chineseSpokenAnswer = options.scope === 'qa' &&
+      (options.responseLanguage ? getResponseLanguageMeta(options.responseLanguage).isChinese : /[\u4e00-\u9fff]/u.test(firstReview.finalAnswer))
     const styleIssues = englishSpokenAnswer
       ? findEnglishSpokenStyleIssues(firstReview.finalAnswer, maxSpokenSentences)
-      : []
+      : chineseSpokenAnswer ? findChineseSpokenStyleIssues(firstReview.finalAnswer) : []
     const depthIssues = findAnswerDepthIssues(
       options.subject,
       firstReview.finalAnswer,
       options.answerStrategy,
       options.repositoryContext
     )
-    if (styleIssues.length === 0 && depthIssues.length === 0) return firstReview
+    const coachingIssues = options.scope === 'qa' ? findAnswerCoachingIssues(firstReview.finalAnswer) : []
+    if (styleIssues.length === 0 && depthIssues.length === 0 && coachingIssues.length === 0) return firstReview
 
     try {
       const secondReview = await requestReview(
         {
           ...options,
           spokenStyleCorrection: styleIssues,
-          scenarioDepthCorrection: depthIssues
+          scenarioDepthCorrection: [...depthIssues, ...coachingIssues]
         },
         firstReview.finalAnswer,
         depthIssues.length > 0 || options.recheckRequested
       )
-      const secondStyleIssues = findEnglishSpokenStyleIssues(
-        secondReview.finalAnswer,
-        maxSpokenSentences
-      )
+      const secondStyleIssues = englishSpokenAnswer
+        ? findEnglishSpokenStyleIssues(secondReview.finalAnswer, maxSpokenSentences)
+        : chineseSpokenAnswer ? findChineseSpokenStyleIssues(secondReview.finalAnswer) : []
       const secondDepthIssues = findAnswerDepthIssues(
         options.subject,
         secondReview.finalAnswer,
         options.answerStrategy,
         options.repositoryContext
       )
+      const secondCoachingIssues = options.scope === 'qa' ? findAnswerCoachingIssues(secondReview.finalAnswer) : []
       if (
+        secondCoachingIssues.length === 0 &&
         (!firstReview.verified || secondReview.verified) &&
         secondStyleIssues.length <= styleIssues.length &&
         (depthIssues.length === 0
           ? secondDepthIssues.length === 0
-          : secondDepthIssues.length < depthIssues.length)
+          : secondDepthIssues.length < depthIssues.length || coachingIssues.length > secondCoachingIssues.length)
       ) {
         return {
           ...secondReview,
@@ -676,15 +706,15 @@ export async function reviewAnswer(options: ReviewAnswerOptions): Promise<Answer
         }
       }
       if (depthIssues.length > 0 && options.answerStrategy === 'project-scenario') {
-        return evidenceLimitedScenarioAnswer(options, secondDepthIssues)
+        return retainUsefulQaDraft(options, firstReview)
       }
     } catch {
       if (depthIssues.length > 0 && options.answerStrategy === 'project-scenario') {
-        return evidenceLimitedScenarioAnswer(options, depthIssues)
+        return retainUsefulQaDraft(options, firstReview)
       }
       // 首轮已经完成独立准确性复核。口语修正失败时保留首轮结果，不吞掉可用答案。
     }
-    return firstReview
+    return retainUsefulQaDraft(options, firstReview)
   }
 
   const expectedCaseCount = countSourceTestCases(options.subject)

@@ -10,6 +10,8 @@ import type { MentorRegionRect } from '@shared/preload-api'
 import type { MentorConfig } from '@shared/types'
 import { MarkdownContent } from './MarkdownContent'
 import { AnswerQualityBadge } from './AnswerQualityBadge'
+import { QuestionTranslation } from './QuestionTranslation'
+import { TranslationPanel } from './TranslationPanel'
 
 const MIN_PANEL_WIDTH = 320
 const MAX_PANEL_WIDTH = 700
@@ -21,6 +23,7 @@ const STATUS_LABELS = {
   ocr: 'OCR 识别中',
   collecting: '滚动捕获中',
   stitching: '长截图识别中',
+  detecting: '语言识别中',
   ai: 'AI 分析中',
   rechecking: '重新核对中',
   verifying: '准确性复核中',
@@ -439,6 +442,7 @@ export function MentorPanel() {
   const isLoading =
     mentor.status === 'ocr' ||
     mentor.status === 'stitching' ||
+    mentor.status === 'detecting' ||
     mentor.status === 'ai' ||
     mentor.status === 'rechecking' ||
     mentor.status === 'verifying'
@@ -747,6 +751,11 @@ export function MentorPanel() {
               {mentor.hasContext ? (
                 <span className="text-emerald-400">已注入对话上下文</span>
               ) : null}
+              {mentor.detectedLanguage ? (
+                <span className="text-violet-300">
+                  内容语言 · {mentor.detectedLanguage.name}
+                </span>
+              ) : null}
               {mentor.programmingLanguage ? (
                 <span
                   className="text-sky-300"
@@ -801,6 +810,13 @@ export function MentorPanel() {
                     : '识别到的屏幕文字会显示在这里'}
               </span>
             )}
+            <QuestionTranslation
+              translation={mentor.sourceTranslation}
+              isLoading={mentor.isSourceTranslating}
+              compact
+              label="原文中文翻译"
+              loadingLabel="正在翻译原文…"
+            />
           </div>
         </section>
 
@@ -870,6 +886,13 @@ export function MentorPanel() {
               </details>
             ) : null}
           </div>
+
+          <TranslationPanel
+            key={mentor.analysisText}
+            translation={mentor.translation}
+            isLoading={mentor.isTranslating}
+            compact
+          />
 
           {mentor.error ? (
             <div

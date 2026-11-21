@@ -1,3 +1,4 @@
+import { net } from 'electron'
 import {
   existsSync,
   mkdirSync,
@@ -235,11 +236,11 @@ retry_delay_ms: 200
       first.repositoryName,
       stored.evidence
     )
-    const originalFetch = globalThis.fetch
+    const originalFetch = net.fetch
     let mockFetchCalls = 0
     let validationRequestBody = ''
     try {
-      globalThis.fetch = (async (_input, init): Promise<Response> => {
+      net.fetch = (async (_input, init): Promise<Response> => {
         mockFetchCalls += 1
         if (mockFetchCalls === 3) validationRequestBody = String(init?.body ?? '')
         const content = mockFetchCalls === 1
@@ -271,7 +272,7 @@ retry_delay_ms: 200
           status: 200,
           headers: { 'Content-Type': 'application/json' }
         })
-      }) as typeof fetch
+      }) as typeof net.fetch
       const verifiedPack = await distillRepositoryKnowledgePack(
         { ...testConfig(), baseURL: 'https://self-test.invalid', apiKey: 'self-test-key' },
         first.id,
@@ -289,7 +290,7 @@ retry_delay_ms: 200
         'validation request retained unrelated evidence and missed the cost boundary'
       )
     } finally {
-      globalThis.fetch = originalFetch
+      net.fetch = originalFetch
     }
     for (const [question, expected] of STRATEGY_FIXTURES) {
       check(

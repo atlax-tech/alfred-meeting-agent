@@ -3,6 +3,8 @@ interface QuestionTranslationProps {
   isLoading?: boolean
   compact?: boolean
   contentFontSize?: number
+  label?: string
+  loadingLabel?: string
 }
 
 /** 非中文问题下方的中文题意，当前问答与历史记录共用。 */
@@ -10,7 +12,9 @@ export function QuestionTranslation({
   translation = '',
   isLoading = false,
   compact = false,
-  contentFontSize
+  contentFontSize,
+  label = '问题中文翻译',
+  loadingLabel = '正在翻译问题…'
 }: QuestionTranslationProps) {
   if (!translation && !isLoading) return null
 
@@ -20,7 +24,7 @@ export function QuestionTranslation({
         {isLoading ? (
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
         ) : null}
-        <span>{isLoading ? '正在翻译问题…' : '问题中文翻译'}</span>
+        <span>{isLoading ? loadingLabel : label}</span>
       </div>
       <div
         className="break-words text-slate-300"

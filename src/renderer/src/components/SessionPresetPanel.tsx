@@ -206,18 +206,21 @@ export function SessionPresetPanel({ open, onClose }: SessionPresetPanelProps) {
 
   const handleFiles = async (files: FileList | null) => {
     if (!files?.length || parsing) return
-    const availableSlots = Math.max(
-      0,
-      MAX_SESSION_PRESET_DOCUMENTS - draft.documents.length
-    )
-    if (availableSlots === 0) {
-      setFileError(`每轮最多添加 ${MAX_SESSION_PRESET_DOCUMENTS} 份资料`)
+    let availableSlots = Math.max(0, MAX_SESSION_PRESET_DOCUMENTS - draft.documents.length)
+    const existingNames = new Set(draft.documents.map((item) => item.name))
+    const selected = Array.from(files).filter((file) => {
+      if (existingNames.has(file.name)) return true
+      if (availableSlots <= 0) return false
+      availableSlots--
+      existingNames.add(file.name)
+      return true
+    })
+    if (selected.length === 0) {
+      setFileError(`本轮已达到 ${MAX_SESSION_PRESET_DOCUMENTS} 份资料；可重新导入同名文件更新全文`)
       return
     }
-
     setParsing(true)
     setFileError('')
-    const selected = Array.from(files).slice(0, availableSlots)
     const results = await Promise.allSettled(
       selected.map(async (file): Promise<SessionPresetDocument> => {
         const data = await file.arrayBuffer()
@@ -250,7 +253,13 @@ export function SessionPresetPanel({ open, onClose }: SessionPresetPanelProps) {
     setDraft((current) => {
       const normalized = normalizeSessionPreset({
         ...current,
-        documents: [...current.documents, ...added]
+        documents: [
+          ...current.documents.map((item) => {
+            const replacement = added.find((document) => document.name === item.name)
+            return replacement ? { ...replacement, id: item.id } : item
+          }),
+          ...added.filter((document) => !current.documents.some((item) => item.name === document.name))
+        ]
       })
       return { ...normalized, qaPairs: current.qaPairs }
     })
@@ -564,14 +573,14 @@ export function SessionPresetPanel({ open, onClose }: SessionPresetPanelProps) {
           />
           <button
             type="button"
-            disabled={parsing || draft.documents.length >= MAX_SESSION_PRESET_DOCUMENTS}
+            disabled={parsing}
             onClick={() => fileInputRef.current?.click()}
             className="w-full rounded-md border border-dashed border-bg-hover bg-bg/40 px-3 py-3 text-xs text-slate-400 transition hover:border-accent/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {parsing ? '正在本地提取文字…' : '添加 PDF / DOCX / 文本资料'}
+            {parsing ? '正在本地提取文字…' : '添加 / 更新 PDF、DOCX、文本资料'}
           </button>
           <div className="text-[9px] leading-4 text-slate-600">
-            单文件最多 20 MB，保留最多 {formatCharacters(MAX_SESSION_PRESET_DOCUMENT_CHARS)}，本轮资料总计最多 {formatCharacters(MAX_SESSION_PRESET_TOTAL_DOCUMENT_CHARS)}。原文件路径不会保存；相关文字会随回答发送给你配置的 LLM。
+            单文件最多 20 MB，保留最多 {formatCharacters(MAX_SESSION_PRESET_DOCUMENT_CHARS)}，本轮资料总计最多 {formatCharacters(MAX_SESSION_PRESET_TOTAL_DOCUMENT_CHARS)}。重新导入同名文件会更新该资料；原文件路径不会保存。系统按问题和章节检索全文，将相关内容交给生成与复核共同使用；选中文字会发送给你配置的 LLM。
           </div>
           {fileError ? (
             <div className="rounded border border-danger/20 bg-danger/5 px-3 py-2 text-[10px] leading-4 text-danger">

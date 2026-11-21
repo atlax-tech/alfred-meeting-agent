@@ -1,18 +1,5 @@
-/**
- * LLM 客户端 —— OpenAI 兼容接口
- *
- * 支持流式输出(SSE),可接入:
- *  - DeepSeek v4-flash / v4-pro(支持思考模式 thinking + reasoning_effort)
- *  - OpenAI 官方 API
- *  - 国内大模型(智谱 GLM、通义千问等,均提供 OpenAI 兼容接口)
- *  - 本地 Ollama / vLLM / LM Studio 等
- *
- * DeepSeek v4 思考模式关键点:
- *  - 流式响应中,delta.reasoning_content 是思维链,delta.content 是最终答案
- *  - 思考模式下 temperature/top_p 等不生效(填了不报错)
- *  - 思维链先输出,最终答案后输出
- */
-
+/** OpenAI-compatible Chat Completions / Responses client. */
+import { buildOpenAIRequest, httpAPIError, readOpenAIResponse, redactAPIError } from '@shared/openai'
 import type {
   DetectedLanguage,
   LLMCallPerformance,
@@ -113,47 +100,6 @@ export function applyResponseLanguageGuard(
   )
 }
 
-/**
- * 构造请求 body
- */
-function buildBody(
-  config: LLMConfig,
-  messages: ChatMessage[],
-  options?: ChatOptions
-): Record<string, unknown> {
-  const body: Record<string, unknown> = {
-    model: config.model,
-    messages: applyResponseLanguageGuard(messages, options?.responseLanguage),
-    stream: true,
-    max_tokens: Math.min(config.maxTokens, options?.maxTokensOverride ?? config.maxTokens)
-  }
-
-  // 思考模式(thinking 字段是 DeepSeek 扩展,其他厂商会忽略)
-  const thinking = options?.thinkingOverride ?? config.thinking
-  body.thinking = { type: thinking }
-
-  // 思考强度(仅 thinking=enabled 时有意义)
-  if (thinking === 'enabled') {
-    body.reasoning_effort = config.reasoningEffort
-  }
-
-  // temperature:思考模式下不生效,但非思考模式下传给模型
-  // (思考模式填了不报错,所以无脑传也可以,这里为了清晰仅在非思考时传)
-  if (thinking === 'disabled') {
-    body.temperature = config.temperature
-  }
-
-  // JSON Output
-  if (options?.jsonOutput) {
-    body.response_format = { type: 'json_object' }
-  }
-
-  return body
-}
-
-/**
- * 调用 OpenAI 兼容的 /chat/completions 接口(流式)
- */
 export async function chatStream(
   config: LLMConfig,
   messages: ChatMessage[],
@@ -165,129 +111,65 @@ export async function chatStream(
   const requestConfig = configForTask(config, task)
   const startedAt = performance.now()
   let firstTokenAt: number | undefined
+  let text = ''
+  let reasoning = ''
   let usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } = {}
-  let metricsSent = false
-  const emitMetrics = (): void => {
-    if (metricsSent) return
-    metricsSent = true
+  try {
+    if (!requestConfig.apiKey.trim()) throw new Error('请在设置中填写 LLM API Key')
+    const request = buildOpenAIRequest(
+      requestConfig,
+      applyResponseLanguageGuard(messages, options?.responseLanguage),
+      { ...options, maxTokens: options?.maxTokensOverride }
+    )
+    const response = await fetch(request.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${requestConfig.apiKey}` },
+      body: JSON.stringify(request.body),
+      signal
+    })
+    if (!response.ok) throw httpAPIError(response.status, (await response.text()).slice(0, 1000), requestConfig.apiKey)
+    const result = await readOpenAIResponse(response, {
+      onText: (delta) => {
+        if (firstTokenAt === undefined) firstTokenAt = performance.now()
+        text += delta
+        cb.onChunk?.(delta)
+      },
+      onReasoning: (delta) => { reasoning += delta; cb.onReasoning?.(delta) }
+    }, requestConfig.apiKey)
+    usage = result.usage
+    cb.onDone?.(result.text, result.reasoning)
+  } catch (error) {
+    if ((error as Error).name === 'AbortError') cb.onDone?.(text, reasoning)
+    else cb.onError?.(new Error(redactAPIError((error as Error).message, requestConfig.apiKey)))
+  } finally {
     options?.metricsCallback?.({
       task,
       model: requestConfig.model,
       durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
-      timeToFirstTokenMs:
-        firstTokenAt === undefined
-          ? undefined
-          : Math.max(0, Math.round(firstTokenAt - startedAt)),
+      timeToFirstTokenMs: firstTokenAt === undefined ? undefined : Math.max(0, Math.round(firstTokenAt - startedAt)),
       promptTokens: usage.prompt_tokens,
       completionTokens: usage.completion_tokens,
       totalTokens: usage.total_tokens
     })
   }
-  if (!requestConfig.apiKey) {
-    cb.onError?.(new Error('未配置 LLM API Key,请到设置面板填写'))
-    emitMetrics()
-    return
-  }
-  if (!requestConfig.baseURL) {
-    cb.onError?.(new Error('未配置 LLM baseURL'))
-    emitMetrics()
-    return
-  }
+}
 
-  // DeepSeek 同时支持 https://api.deepseek.com 和 https://api.deepseek.com/v1
-  // 统一拼接 /chat/completions
-  const url = `${requestConfig.baseURL.replace(/\/$/, '')}/chat/completions`
-  const body = buildBody(requestConfig, messages, options)
-
-  let response: Response
+/** Uses the same streaming request and parser as real answers; contains no personal context. */
+export async function testLLMConnection(config: LLMConfig, signal?: AbortSignal): Promise<string> {
+  const controller = new AbortController()
+  const abort = (): void => controller.abort()
+  signal?.addEventListener('abort', abort, { once: true })
+  if (signal?.aborted) controller.abort()
+  const timeout = setTimeout(abort, 30_000)
+  const start = performance.now()
   try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${requestConfig.apiKey}`
-      },
-      body: JSON.stringify(body),
-      signal
-    })
-  } catch (err) {
-    cb.onError?.(new Error(`LLM 请求失败: ${(err as Error).message}`))
-    emitMetrics()
-    return
-  }
-
-  if (!response.ok) {
-    const text = await response.text().catch(() => '')
-    cb.onError?.(new Error(`LLM HTTP ${response.status}: ${text.slice(0, 300)}`))
-    emitMetrics()
-    return
-  }
-
-  if (!response.body) {
-    cb.onError?.(new Error('LLM 响应无 body'))
-    emitMetrics()
-    return
-  }
-
-  // 解析 SSE 流 —— 同时处理 reasoning_content 和 content
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder('utf-8')
-  let buffer = ''
-  let fullText = ''
-  let fullReasoning = ''
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-
-      // SSE 以 \n\n 分隔事件
-      const lines = buffer.split('\n')
-      buffer = lines.pop() ?? ''
-
-      for (const line of lines) {
-        const trimmed = line.trim()
-        if (!trimmed.startsWith('data:')) continue
-        const data = trimmed.slice(5).trim()
-        if (data === '[DONE]') {
-          cb.onDone?.(fullText, fullReasoning)
-          emitMetrics()
-          return
-        }
-        try {
-          const json = JSON.parse(data)
-          if (json.usage && typeof json.usage === 'object') {
-            usage = { ...usage, ...json.usage }
-          }
-          const delta = json.choices?.[0]?.delta
-          if (!delta) continue
-
-          // 思维链(思考模式)
-          if (delta.reasoning_content) {
-            fullReasoning += delta.reasoning_content
-            cb.onReasoning?.(delta.reasoning_content)
-          }
-          // 最终答案
-          if (delta.content) {
-            if (firstTokenAt === undefined) firstTokenAt = performance.now()
-            fullText += delta.content
-            cb.onChunk?.(delta.content)
-          }
-        } catch {
-          // 忽略解析失败的 chunk
-        }
-      }
-    }
-    cb.onDone?.(fullText, fullReasoning)
-    emitMetrics()
-  } catch (err) {
-    if ((err as Error).name === 'AbortError') {
-      cb.onDone?.(fullText, fullReasoning)
-    } else {
-      cb.onError?.(err as Error)
-    }
-    emitMetrics()
+    const text = await chatOnce(config, [{ role: 'user', content: 'Reply exactly OK.' }], controller.signal, { maxTokensOverride: 128 })
+    if (controller.signal.aborted) throw new Error('测试已取消或超过30秒；请检查网络、输出上限与思考配置')
+    if (!text.trim()) throw new Error('模型未返回有效文本')
+    return `连接成功：${config.model} · ${config.apiFormat === 'responses' ? 'Responses' : 'Chat Completions'} · ${(performance.now() - start).toFixed(0)} ms`
+  } finally {
+    clearTimeout(timeout)
+    signal?.removeEventListener('abort', abort)
   }
 }
 

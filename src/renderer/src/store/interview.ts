@@ -43,7 +43,10 @@ import {
 import type { OcrStitchStep } from '../services/ocr-stitch'
 import {
   extractQuestion,
+  detectContentLanguage,
+  inferLanguageFromText,
   buildAnswerMessages,
+  buildContentTranslationMessages,
   buildQuestionTranslationMessages,
   buildTranslationMessages,
   buildContextCompressionMessages,
@@ -86,7 +89,7 @@ const MENTOR_SYSTEM_PROMPT =
   '【算法/编程题】信号：代码片段、函数签名、输入输出格式、数据结构（数组/链表/树/图/栈/堆/哈希）、' +
   '算法术语（排序/搜索/DP/回溯/贪心/BFS/DFS/递归/二分/滑动窗口/双指针）、' +
   '复杂度符号 O(n)/O(logn)、LeetCode 风格描述。' +
-  '英文编程题属于此类，直接解答无需单独翻译。\n' +
+  '英文编程题属于此类，直接使用题目语言解答；中文翻译由独立翻译窗口提供。\n' +
   '\n' +
   '【翻译需求】信号：大段外文文本（英文/日文/韩文等），无明显题目结构（无选项/无填空/无问答），' +
   '内容为文章/文档/对话等连续文本。注意：外文试卷或编程题不属于翻译需求。\n' +
@@ -108,20 +111,20 @@ const MENTOR_SYSTEM_PROMPT =
   '6. 时间/空间复杂度\n' +
   '\n' +
   '● 翻译需求：\n' +
-  '1. 中文翻译（保留段落结构，专业术语保留英文）\n' +
-  '2. 如有难句或关键术语，附简短解释\n' +
+  '1. 主回答使用原文语言概括主要内容和结构\n' +
+  '2. 如有难句或关键术语，使用原文语言附简短解释；不要在主回答中加入中文对照\n' +
   '\n' +
   '● 普通测试题：\n' +
   '1. 给出正确答案（选择题标选项+内容，填空题写填入内容，问答题先结论）\n' +
   '2. 每题附 1-3 句解析（为什么是这个答案、涉及的知识点）\n' +
-  '3. 外文题干先给一句中文概括\n' +
+  '3. 外文题干直接使用题干语言解答；不要在主回答中加入中文概括\n' +
   '\n' +
   '● 其他：\n' +
   '报错 → 含义和常见原因；配置 → 关键参数解释；笔记 → 总结提取\n' +
   '\n' +
   '==== 复合场景 =====\n' +
   '\n' +
-  '【外文+题目】先给中文题意概括，再按对应题型完整解答，不单独输出翻译。\n' +
+  '【外文+题目】直接使用题目语言按对应题型完整解答；中文翻译由独立翻译窗口提供。\n' +
   '【多道题】按题号顺序逐一解答，每题用 "### 题 N" 标注。超过 5 道先解前 5 道，末尾提示可重新截取。\n' +
   '\n' +
   '==== 约束 =====\n' +
@@ -148,6 +151,7 @@ type MentorStatus =
   | 'ocr'
   | 'collecting'
   | 'stitching'
+  | 'detecting'
   | 'ai'
   | 'rechecking'
   | 'verifying'
@@ -159,6 +163,11 @@ interface MentorState {
   ocrText: string
   analysisText: string
   summary: string
+  sourceTranslation: string
+  translation: string
+  detectedLanguage: DetectedLanguage | null
+  isSourceTranslating: boolean
+  isTranslating: boolean
   reasoning: string
   status: MentorStatus
   error: string
@@ -197,6 +206,7 @@ interface MentorCaptureOptions {
   inputQualityOverride?: InputQuality
   ocrConfidenceOverride?: number
   programmingLanguage?: string
+  detectedLanguageOverride?: DetectedLanguage | null
   previousAnswer?: string
   recheck?: boolean
   captureWarnings?: string[]
@@ -565,6 +575,11 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
     ocrText: '',
     analysisText: '',
     summary: '',
+    sourceTranslation: '',
+    translation: '',
+    detectedLanguage: null,
+    isSourceTranslating: false,
+    isTranslating: false,
     reasoning: '',
     status: 'input',
     error: '',
@@ -933,6 +948,11 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
         ocrText: continuous ? state.mentorCapture.mergedText : '',
         analysisText: continuous ? state.mentorCapture.mergedText : '',
         summary: '',
+        sourceTranslation: '',
+        translation: '',
+        detectedLanguage: null,
+        isSourceTranslating: false,
+        isTranslating: false,
         reasoning: '',
         status: 'selecting',
         error: '',
@@ -964,6 +984,11 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
         ocrText: '',
         analysisText: '',
         summary: '',
+        sourceTranslation: '',
+        translation: '',
+        detectedLanguage: null,
+        isSourceTranslating: false,
+        isTranslating: false,
         reasoning: '',
         status: 'collecting',
         error: '',
@@ -1142,6 +1167,11 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
           ocrText: '',
           analysisText: '',
           summary: '',
+          sourceTranslation: '',
+          translation: '',
+          detectedLanguage: null,
+          isSourceTranslating: false,
+          isTranslating: false,
           reasoning: '',
           status: 'collecting',
           error: '',
@@ -1419,6 +1449,13 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
         ...state.mentor,
         ocrText: '',
         analysisText: '',
+        summary: '',
+        sourceTranslation: '',
+        translation: '',
+        detectedLanguage: null,
+        isSourceTranslating: false,
+        isTranslating: false,
+        reasoning: '',
         status: 'collecting',
         error: '',
         inputQuality: mentorCapture.warnings.length > 0 ? 'low' : 'high',
@@ -1441,6 +1478,11 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
         ocrText: '',
         analysisText: '',
         summary: '',
+        sourceTranslation: '',
+        translation: '',
+        detectedLanguage: null,
+        isSourceTranslating: false,
+        isTranslating: false,
         reasoning: '',
         status: 'idle',
         error: '',
@@ -1483,12 +1525,19 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
         ocrText: isRecheck ? initialState.mentor.ocrText : '',
         analysisText: isRecheck ? options?.analysisTextOverride?.trim() ?? '' : '',
         summary: '',
+        sourceTranslation: '',
+        translation: '',
+        detectedLanguage: isRecheck
+          ? options?.detectedLanguageOverride ?? initialState.mentor.detectedLanguage
+          : null,
+        isSourceTranslating: false,
+        isTranslating: false,
         reasoning: '',
         status: isRecheck
           ? 'rechecking'
           : recognizedText === undefined
             ? 'ocr'
-            : 'ai',
+            : 'detecting',
         error: '',
         hasContext: false,
         inputQuality: options?.inputQualityOverride ?? 'high',
@@ -1567,6 +1616,35 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
     if (!analysisText) analysisText = ocrText
 
     const controller = new AbortController()
+    const mentorConfig = get().config
+    const languageMode = mentorConfig.interview.region
+    set({
+      mentor: {
+        ...get().mentor,
+        ocrText,
+        analysisText,
+        status: isRecheck ? 'rechecking' : 'detecting',
+        error: '',
+        inputQuality,
+        ocrConfidence
+      },
+      _mentorAbort: controller
+    })
+
+    const detectedLanguage =
+      options?.detectedLanguageOverride ??
+      (languageMode === 'mixed'
+        ? await detectContentLanguage(mentorConfig.llm, analysisText, controller.signal)
+        : inferLanguageFromText(analysisText))
+    if (!isActive() || controller.signal.aborted) return
+
+    const answerLanguage = resolveAnswerLanguage(languageMode, detectedLanguage)
+    const shouldTranslate = shouldGenerateTranslation(
+      languageMode,
+      mentorConfig.interview.bilingualTranslationEnabled,
+      detectedLanguage
+    )
+
     let timedOut = false
     let fullSummary = ''
     let fullReasoning = ''
@@ -1649,14 +1727,54 @@ ${contextualMessage}`
         error: '',
         hasContext,
         inputQuality,
-        ocrConfidence
+        ocrConfidence,
+        detectedLanguage,
+        isSourceTranslating: shouldTranslate,
+        isTranslating: false
       },
       _mentorAbort: controller
     })
 
+    let fullSourceTranslation = ''
+    const translationErrors: string[] = []
+    const sourceTranslationPromise = shouldTranslate
+      ? chatOnce(
+          mentorConfig.llm,
+          buildContentTranslationMessages(analysisText, detectedLanguage),
+          controller.signal,
+          {
+            thinkingOverride: 'disabled',
+            responseLanguage: 'zh',
+            task: 'translation',
+            maxTokensOverride: 2000
+          }
+        )
+          .then((translation) => {
+            if (!isActive() || controller.signal.aborted) return
+            fullSourceTranslation = translation.trim()
+            set({
+              mentor: {
+                ...get().mentor,
+                sourceTranslation: fullSourceTranslation,
+                isSourceTranslating: false
+              }
+            })
+          })
+          .catch((error: Error) => {
+            translationErrors.push(`原文中文翻译生成失败：${error.message}`)
+            if (!isActive()) return
+            set({
+              mentor: {
+                ...get().mentor,
+                isSourceTranslating: false
+              }
+            })
+          })
+      : Promise.resolve()
+
     try {
       await chatStream(
-        get().config.llm,
+        mentorConfig.llm,
         [
           { role: 'system', content: MENTOR_SYSTEM_PROMPT },
           { role: 'user', content: mentorUserMessage }
@@ -1692,7 +1810,10 @@ ${contextualMessage}`
           }
         },
         controller.signal,
-        undefined
+        {
+          responseLanguage: answerLanguage,
+          task: 'answer'
+        }
       )
 
       if (!timedOut && !aiError && fullSummary.trim() && isActive()) {
@@ -1704,7 +1825,7 @@ ${contextualMessage}`
         })
         try {
           const review = await reviewAnswer({
-            llmConfig: get().config.llm,
+            llmConfig: mentorConfig.llm,
             scope: 'mentor',
             subject: options?.programmingLanguage
               ? `当前编辑器编程语言：${options.programmingLanguage}\n\n${analysisText}`
@@ -1713,6 +1834,7 @@ ${contextualMessage}`
             evidence: contextSections.join('\n\n'),
             inputQuality,
             recheckRequested: isRecheck,
+            responseLanguage: answerLanguage,
             signal: controller.signal
           })
           fullSummary = review.finalAnswer
@@ -1743,7 +1865,9 @@ ${contextualMessage}`
           answerConfidence: 'unverified',
           answerQualityNote: '请求超时，未完成独立复核',
           answerVerified: false,
-          answerCorrected: false
+          answerCorrected: false,
+          isSourceTranslating: false,
+          isTranslating: false
         },
         _mentorAbort: null
       })
@@ -1751,11 +1875,29 @@ ${contextualMessage}`
     }
 
     if (aiError) {
+      controller.abort()
       set({
         mentor: {
           ...get().mentor,
           status: 'error',
-          error: `AI 分析失败：${(aiError as Error).message}`
+          error: `AI 分析失败：${(aiError as Error).message}`,
+          isSourceTranslating: false,
+          isTranslating: false
+        },
+        _mentorAbort: null
+      })
+      return
+    }
+
+    if (!fullSummary.trim()) {
+      controller.abort()
+      set({
+        mentor: {
+          ...get().mentor,
+          status: 'error',
+          error: 'AI 未返回摘要内容',
+          isSourceTranslating: false,
+          isTranslating: false
         },
         _mentorAbort: null
       })
@@ -1767,12 +1909,68 @@ ${contextualMessage}`
         ...get().mentor,
         summary: fullSummary,
         reasoning: fullReasoning,
-        status: fullSummary.trim() ? 'done' : 'error',
-        error: fullSummary.trim() ? '' : 'AI 未返回摘要内容',
+        status: 'done',
+        error: '',
+        isTranslating: shouldTranslate,
         answerConfidence,
         answerQualityNote,
         answerVerified,
         answerCorrected
+      },
+      _mentorAbort: controller
+    })
+
+    await sourceTranslationPromise
+    if (!isActive() || controller.signal.aborted) return
+
+    let fullTranslation = ''
+    if (shouldTranslate) {
+      await chatStream(
+        mentorConfig.llm,
+        buildTranslationMessages(fullSummary, detectedLanguage),
+        {
+          onChunk: (delta) => {
+            if (!isActive()) return
+            fullTranslation += delta
+            set({
+              mentor: {
+                ...get().mentor,
+                translation: fullTranslation
+              }
+            })
+          },
+          onDone: (translation) => {
+            if (!isActive()) return
+            fullTranslation = translation
+            set({
+              mentor: {
+                ...get().mentor,
+                translation
+              }
+            })
+          },
+          onError: (error) => {
+            translationErrors.push(`回答中文翻译生成失败：${error.message}`)
+          }
+        },
+        controller.signal,
+        {
+          thinkingOverride: 'disabled',
+          responseLanguage: 'zh',
+          task: 'translation'
+        }
+      )
+    }
+
+    if (!isActive() || controller.signal.aborted) return
+    set({
+      mentor: {
+        ...get().mentor,
+        sourceTranslation: fullSourceTranslation,
+        translation: fullTranslation,
+        isSourceTranslating: false,
+        isTranslating: false,
+        error: translationErrors.join('；')
       },
       _mentorAbort: null
     })
@@ -1792,6 +1990,7 @@ ${contextualMessage}`
       inputQualityOverride: state.mentor.inputQuality,
       ocrConfidenceOverride: state.mentor.ocrConfidence,
       programmingLanguage: state.mentor.programmingLanguage,
+      detectedLanguageOverride: state.mentor.detectedLanguage,
       previousAnswer,
       recheck: true,
       captureWarnings: state.mentorCapture.warnings,
@@ -1836,6 +2035,11 @@ ${contextualMessage}`
         ocrText: '',
         analysisText: '',
         summary: '',
+        sourceTranslation: '',
+        translation: '',
+        detectedLanguage: null,
+        isSourceTranslating: false,
+        isTranslating: false,
         reasoning: '',
         status: 'idle',
         error: '',
@@ -2839,9 +3043,6 @@ async function handleFinalTranscript(
     repositoryInstructions
       ? `本轮生成器使用的工作仓库证据包:\n${repositoryInstructions}`
       : '',
-    sessionPresetInstructions
-      ? `当前会话主题、资料和用户期望口径:\n${sessionPresetInstructions}`
-      : '',
     answerConfig.interview.resume?.trim()
       ? `学习者背景资料:\n${answerConfig.interview.resume.trim().slice(0, 5000)}`
       : '',
@@ -2860,7 +3061,8 @@ async function handleFinalTranscript(
     question,
     fullAnswer,
     repositoryContext,
-    answerLanguage
+    answerLanguage,
+    strategy
   )
   if (reviewSkipped) {
     answerConfidence = 'medium'
@@ -2874,6 +3076,7 @@ async function handleFinalTranscript(
         subject: question,
         draftAnswer: fullAnswer,
         evidence: reviewEvidence,
+        referenceInstructions: sessionPresetInstructions,
         responseLanguage: answerLanguage,
         personalizationInstructions: [
           buildPersonalizationInstructions(get().personalization),

@@ -42,8 +42,10 @@ export function saveConfig(config: AppConfig): void {
 }
 
 function mergeConfig(base: AppConfig, override: Partial<AppConfig>): AppConfig {
+  const llm = { ...base.llm, ...(override.llm ?? {}) }
+  if ((llm.reasoningEffort as string) === 'max') llm.reasoningEffort = 'xhigh'
   return {
-    llm: { ...base.llm, ...(override.llm ?? {}) },
+    llm,
     stt: { ...base.stt, ...(override.stt ?? {}) },
     interview: { ...base.interview, ...(override.interview ?? {}) },
     mentor: { ...base.mentor, ...(override.mentor ?? {}) },

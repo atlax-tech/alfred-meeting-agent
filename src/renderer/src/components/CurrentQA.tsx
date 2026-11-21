@@ -15,7 +15,7 @@ import { chatQANoteSourceId } from '../services/meeting-notes'
 const WORKING_LABEL = {
   extracting: '正在识别问题…',
   answering: '正在准备回答…',
-  verifying: '正在独立复核答案…',
+  verifying: '正在校对与优化答案…',
   translating: '正在生成翻译…',
   compressing: '正在压缩上下文…'
 } as const
@@ -161,7 +161,7 @@ export function CurrentQA() {
       {currentAnswer ? (
         <article className="rounded-lg bg-bg-card px-3 py-2.5">
           <div className="mb-1.5 flex items-center gap-2 text-[10px] font-medium tracking-wide text-slate-400">
-            <span>AI 回答</span>
+            <span>优化答复</span>
             {mixedMode && currentDetectedLanguage ? (
               <span className="rounded bg-bg-hover px-1.5 py-0.5 text-[9px] text-accent-glow">
                 {currentDetectedLanguage.name}
@@ -171,7 +171,7 @@ export function CurrentQA() {
               <span className="h-3 w-0.5 animate-pulse bg-accent" />
             ) : null}
             {status === 'verifying' ? (
-              <span className="text-[9px] text-amber-300">正在独立复核</span>
+              <span className="text-[9px] text-amber-300">正在校对与优化</span>
             ) : (
               <AnswerQualityBadge
                 confidence={currentAnswerConfidence}
@@ -188,11 +188,6 @@ export function CurrentQA() {
             <MarkdownContent content={currentAnswer} />
             <span ref={answerEndRef} />
           </div>
-          {currentAnswerQualityNote && currentAnswerConfidence !== 'high' ? (
-            <p className="mt-2 border-t border-slate-700/70 pt-2 text-[10px] leading-4 text-amber-200/80">
-              可靠性提示：{currentAnswerQualityNote}
-            </p>
-          ) : null}
           {completedQA?.repositorySnapshotId && completedQA.repositoryEvidenceIds?.length ? (
             <div className="mt-2 border-t border-slate-700/70 pt-2">
               <button

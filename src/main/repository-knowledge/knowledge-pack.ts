@@ -1,3 +1,5 @@
+import { net } from 'electron'
+import { buildOpenAIRequest, httpAPIError, responseText } from '@shared/openai'
 import { createHash } from 'crypto'
 import type {
   LLMConfig,
@@ -228,31 +230,24 @@ async function callJson(
               content: '上一次输出不完整或不是有效 JSON。缩小结果，只保留最有证据价值的内容：facts 不超过 16 条，glossary 和 likelyQuestions 各不超过 10 条。必须闭合所有 JSON 字符串、数组和对象。'
             }
           ]
-      const response = await fetch(`${config.baseURL.replace(/\/$/u, '')}/chat/completions`, {
+      const request = buildOpenAIRequest({ ...config, model, maxTokens: Math.min(Math.max(config.maxTokens, 4096), 6000) }, retryMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>, {
+        stream: false, jsonOutput: true, thinkingOverride: 'disabled'
+      })
+      const response = await net.fetch(request.url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${config.apiKey}`
         },
         signal,
-        body: JSON.stringify({
-          model,
-          messages: retryMessages,
-          stream: false,
-          max_tokens: Math.min(Math.max(config.maxTokens, 4096), 6000),
-          temperature: 0.1,
-          response_format: { type: 'json_object' },
-          thinking: { type: 'disabled' }
-        })
+        body: JSON.stringify(request.body)
       })
       if (!response.ok) {
         const body = await response.text().catch(() => '')
-        throw new Error(`离线知识包模型请求失败 (${response.status})：${body.slice(0, 240)}`)
+        throw httpAPIError(response.status, body.slice(0, 240), config.apiKey)
       }
-      const payload = await response.json() as {
-        choices?: Array<{ message?: { content?: string } }>
-      }
-      const content = payload.choices?.[0]?.message?.content ?? ''
+      const payload = await response.json()
+      const content = responseText(payload)
       if (!content.trim()) throw new Error('离线知识包模型没有返回内容')
       return JSON.parse(cleanJson(content))
     } catch (error) {

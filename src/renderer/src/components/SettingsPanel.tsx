@@ -6,7 +6,8 @@
  *  - 窗口显示偏好(实时生效)
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { testLLMConnection } from '../services/llm'
 import { useInterviewStore } from '../store/interview'
 import type { AppConfig, AnswerMode, Region, StealthState } from '@shared/types'
 import { PersonalizationSettings } from './PersonalizationSettings'
@@ -29,6 +30,34 @@ export function SettingsPanel() {
   // 本地草稿,关闭时丢弃,保存时提交
   const [draft, setDraft] = useState<AppConfig>(config)
   const [savedTip, setSavedTip] = useState(false)
+  const [connectionResult, setConnectionResult] = useState<{ state: 'running' | 'success' | 'error'; message: string } | null>(null)
+  const connectionController = useRef<AbortController | null>(null)
+
+  useEffect(() => {
+    setConnectionResult(null)
+    return () => {
+      connectionController.current?.abort()
+      connectionController.current = null
+    }
+  }, [open, draft.llm])
+
+  const handleConnectionTest = async () => {
+    if (connectionController.current) {
+      connectionController.current.abort()
+      return
+    }
+    const controller = new AbortController()
+    connectionController.current = controller
+    setConnectionResult({ state: 'running', message: '正在用当前草稿配置测试真实生成（最多30秒）…' })
+    try {
+      const message = await testLLMConnection(draft.llm, controller.signal)
+      if (connectionController.current === controller) setConnectionResult({ state: 'success', message })
+    } catch (error) {
+      if (connectionController.current === controller) setConnectionResult({ state: 'error', message: (error as Error).message })
+    } finally {
+      if (connectionController.current === controller) connectionController.current = null
+    }
+  }
 
   useEffect(() => {
     if (open) setDraft(config)
@@ -82,16 +111,26 @@ export function SettingsPanel() {
           {/* LLM 配置 —— 用户接入自己模型的入口 */}
           <Section
             title="LLM 模型接入(OpenAI 兼容)"
-            desc="默认配置为 DeepSeek v4-flash。也可接入 OpenAI / 智谱 / 通义 / Ollama / vLLM 等"
+            desc="按 API 协议配置，不绑定厂商。模型和可选参数须由你的服务端支持。"
           >
             <Field label="Base URL">
               <input
                 type="text"
                 value={draft.llm.baseURL}
                 onChange={(e) => patchLLM({ baseURL: e.target.value })}
-                placeholder="https://api.deepseek.com"
+                placeholder="https://你的服务地址/v1"
                 className={inputCls}
               />
+            </Field>
+            <Field label="API 格式">
+              <select
+                value={draft.llm.apiFormat ?? 'chat'}
+                onChange={(e) => patchLLM({ apiFormat: e.target.value as 'chat' | 'responses' })}
+                className={inputCls}
+              >
+                <option value="chat">Chat Completions（/chat/completions）</option>
+                <option value="responses">Responses（/responses）</option>
+              </select>
             </Field>
             <Field label="API Key">
               <input
@@ -108,13 +147,14 @@ export function SettingsPanel() {
                   type="text"
                   value={draft.llm.model}
                   onChange={(e) => patchLLM({ model: e.target.value })}
-                  placeholder="deepseek-v4-flash"
+                  placeholder="填写服务端提供的模型 ID"
                   className={inputCls}
                 />
               </Field>
-              <Field label="温度(非思考模式生效)">
+              <Field label="温度（发送时生效）">
                 <input
                   type="number"
+                  disabled={!draft.llm.sendTemperature}
                   step="0.1"
                   min="0"
                   max="2"
@@ -134,6 +174,20 @@ export function SettingsPanel() {
               </Field>
             </div>
 
+            <Toggle
+              label="发送温度参数"
+              desc="默认不发送；仅在服务端支持 temperature 时开启，与是否思考无固定关系。"
+              checked={draft.llm.sendTemperature === true}
+              onChange={(v) => patchLLM({ sendTemperature: v })}
+            />
+            {(draft.llm.apiFormat ?? 'chat') === 'chat' && (
+              <Field label="输出上限字段">
+                <select value={draft.llm.tokenLimitField ?? 'max_tokens'} onChange={(e) => patchLLM({ tokenLimitField: e.target.value as 'max_tokens' | 'max_completion_tokens' })} className={inputCls}>
+                  <option value="max_tokens">max_tokens（常见兼容服务）</option>
+                  <option value="max_completion_tokens">max_completion_tokens（支持该字段的模型）</option>
+                </select>
+              </Field>
+            )}
             <div className="grid grid-cols-3 gap-3">
               <Field label="轻量模型（可选）">
                 <input
@@ -165,8 +219,8 @@ export function SettingsPanel() {
             </div>
 
             <Toggle
-              label="DeepSeek 1M 长上下文"
-              desc="开启后尽量携带完整历史问答、现场对话、简历和知识库。仅在当前模型确实支持大上下文时开启，输入成本和响应时间会增加。"
+              label="扩大会话上下文"
+              desc="开启后扩大本地会话预算，不会改变模型的实际窗口上限。仅在当前模型支持时开启，输入成本和响应时间会增加。"
               checked={draft.llm.millionContextEnabled}
               onChange={(v) => patchLLM({ millionContextEnabled: v })}
             />
@@ -178,48 +232,38 @@ export function SettingsPanel() {
               onChange={(v) => patchLLM({ adaptiveReviewEnabled: v })}
             />
 
-            {/* 思考模式(DeepSeek v4 系列) */}
             <div className="bg-bg-card rounded p-3 space-y-2.5">
-              <div className="text-xs text-accent-glow font-medium">
-                思考模式(DeepSeek v4 系列专属,其他模型会忽略)
-              </div>
               <Toggle
-                label="开启思考模式"
-                desc="开启后模型先输出思维链再给答案,准确度更高但更慢。实时练习场景建议关闭,算法题/系统设计可临时开启"
+                label="自定义思考程度参数"
+                desc="关闭时不发送思考字段，遵循服务端默认。要显式关闭思考，请开启此配置并选择 none；需要模型支持。"
                 checked={draft.llm.thinking === 'enabled'}
                 onChange={(v) => patchLLM({ thinking: v ? 'enabled' : 'disabled' })}
               />
               {draft.llm.thinking === 'enabled' && (
-                <Field label="思考强度">
-                  <div className="grid grid-cols-2 gap-2">
-                    {(['high', 'max'] as const).map((effort) => (
-                      <button
-                        key={effort}
-                        onClick={() => patchLLM({ reasoningEffort: effort })}
-                        className={`px-2 py-1.5 rounded text-xs transition ${
-                          draft.llm.reasoningEffort === effort
-                            ? 'bg-accent text-white'
-                            : 'bg-bg-card text-slate-300 hover:bg-bg-hover'
-                        }`}
-                      >
-                        {effort === 'high' ? 'high(推荐,平衡)' : 'max(最准但最慢)'}
-                      </button>
-                    ))}
-                  </div>
+                <Field label={draft.llm.apiFormat === 'responses' ? 'reasoning.effort' : 'reasoning_effort'}>
+                  <select value={draft.llm.reasoningEffort} onChange={(e) => patchLLM({ reasoningEffort: e.target.value as AppConfig['llm']['reasoningEffort'] })} className={inputCls}>
+                    <option value="none">none（关闭思考，需服务端支持）</option>
+                    <option value="minimal">minimal</option>
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
+                    <option value="xhigh">xhigh</option>
+                  </select>
                 </Field>
               )}
-              {draft.llm.thinking === 'enabled' && (
-                <div className="text-xs text-warn">
-                  注意:思考模式下 temperature 不生效;思维链会在答案上方折叠展示
-                </div>
-              )}
+              <p className="text-xs text-slate-400">不同模型支持的程度不同；不会发送厂商专属 thinking 字段，也不保证模型会返回推理摘要。</p>
             </div>
 
-            <div className="text-xs text-slate-500 mt-1">
-              DeepSeek v4-flash 推荐:Base URL 填 <code className="text-accent">https://api.deepseek.com</code>,
-              模型 <code className="text-accent">deepseek-v4-flash</code>。
-              其他模型:OpenAI <code className="text-accent">gpt-4o-mini</code>、
-              本地 Ollama <code className="text-accent">http://localhost:11434/v1</code>。
+            <div className="space-y-2">
+              <button type="button" onClick={() => void handleConnectionTest()} className="px-3 py-2 rounded bg-accent text-white text-xs">
+                {connectionResult?.state === 'running' ? '取消连接测试' : '测试模型连接'}
+              </button>
+              <p className="text-xs text-slate-400">测试当前主模型及草稿参数；不发送简历或知识库，不自动保存。会产生少量 API 用量。</p>
+              {connectionResult && <p role="status" className={`text-xs break-words ${connectionResult.state === 'error' ? 'text-red-300' : connectionResult.state === 'success' ? 'text-emerald-300' : 'text-slate-300'}`}>{connectionResult.message}</p>}
+            </div>
+            <div className="text-xs text-slate-500">
+              填写 API 地址而非控制台网页。根域名自动补 /v1；自定义路径会保留。
+              Responses 使用 max_output_tokens；其他可选参数是否支持，以服务端文档和连接测试结果为准。
             </div>
             <div className="rounded border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs leading-5 text-amber-100/80">
               默认情况下，Mentor 和问答答案生成后会自动追加一次独立复核，并显示置信度。
@@ -387,7 +431,7 @@ export function SettingsPanel() {
             </div>
             <Toggle
               label="混合模式中文翻译"
-              desc="仅混合模式生效：检测到非中文问题时显示中文题意，并在原语言回答下方生成可展开/折叠的中文翻译；中文内容不翻译"
+              desc="问答与 Mentor 共用：仅混合模式生效；检测到非中文内容时显示中文原文，并在原语言回答下方生成可展开/折叠的中文翻译"
               checked={draft.interview.bilingualTranslationEnabled}
               onChange={(v) => patchInterview({ bilingualTranslationEnabled: v })}
             />

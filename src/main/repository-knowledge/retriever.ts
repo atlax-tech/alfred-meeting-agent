@@ -57,7 +57,7 @@ function expandedQuery(stored: StoredRepositorySnapshot, request: RepositoryRetr
 function strategyFacetQueries(strategy: AnswerStrategyKind | undefined): string[] {
   if (strategy === 'project-scenario') {
     return [
-      'evidence incomplete uncertainty assumption limited information unknown decision risk 证据不足 信息有限 不确定 假设 决策 风险',
+      'business scenario user request responsibility design decision 业务场景 用户需求 采购任务 负责 设计 决策',
       'specific problem constraint trade-off chose because scope boundary 具体问题 约束 取舍 选择 原因 范围 边界',
       'implementation workflow component changed built action 解决方式 实现 工作流 组件 改动 动作',
       'manual test feedback acceptance verify rollback fallback stop condition result PM 手测 反馈 验收 验证 回滚 降级 停止条件 结果'

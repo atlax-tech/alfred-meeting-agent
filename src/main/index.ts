@@ -30,12 +30,12 @@ initAudioLoopback({
   }
 })
 
-// Chromium 命令行级代理:Web Speech API 走 Chromium 内部网络通道,
-// 不走 Electron session.setProxy,必须在 app.whenReady 之前设置才生效
-// 默认 Clash Verge HTTP 端口 7899,可通过 APP_PROXY 环境变量覆盖
-const proxyURL = process.env.APP_PROXY || 'http://127.0.0.1:7899'
-app.commandLine.appendSwitch('proxy-server', proxyURL)
-app.commandLine.appendSwitch('proxy-bypass-list', '<local>')
+// Respect the system network configuration unless an explicit app proxy is supplied.
+const proxyURL = process.env.APP_PROXY?.trim()
+if (proxyURL) {
+  app.commandLine.appendSwitch('proxy-server', proxyURL)
+  app.commandLine.appendSwitch('proxy-bypass-list', '<local>')
+}
 
 // 单实例锁
 const repositorySelfTest = process.env.ALFRED_REPOSITORY_SELF_TEST === '1'
@@ -71,10 +71,9 @@ if (!gotLock) {
       app.setAppUserModelId('com.atlax.inview-practice')
     }
 
-    // 走本地 HTTP 代理:Web Speech API 底层访问 Google 服务器,国内需代理
-    // 默认 Clash/Clash Verge HTTP 端口 7899,可通过环境变量 APP_PROXY 覆盖,如 http://127.0.0.1:7899
-    const proxyURL = process.env.APP_PROXY || 'http://127.0.0.1:7899'
-    await session.defaultSession.setProxy({ proxyRules: proxyURL })
+    await session.defaultSession.setProxy(
+      proxyURL ? { proxyRules: proxyURL } : { mode: 'system' }
+    )
 
     registerIpcHandlers()
 

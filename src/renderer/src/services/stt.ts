@@ -13,6 +13,7 @@
  */
 
 import type { STTConfig, AudioSourceType } from '@shared/types'
+import { apiEndpoint, httpAPIError, redactAPIError } from '@shared/openai'
 
 export interface STTCallbacks {
   /** 中间结果 */
@@ -290,6 +291,7 @@ class WhisperSingleEngine implements STTEngine {
   private analyser: AnalyserNode | null = null
   private gainNode: GainNode | null = null
   private volumeInterval: ReturnType<typeof setInterval> | null = null
+  private requests = new Set<AbortController>()
   private pending = 0
   private readonly maxConcurrent = 2
   /** 约 0.8% 满幅音量；配合系统/麦克风自带降噪，能过滤大部分底噪。 */
@@ -509,7 +511,7 @@ class WhisperSingleEngine implements STTEngine {
   }
 
   private async recognizeBlob(blob: Blob): Promise<string> {
-    const url = `${this.config.baseURL!.replace(/\/$/, '')}/audio/transcriptions`
+    const url = apiEndpoint(this.config.baseURL ?? '', 'audio/transcriptions')
     const form = new FormData()
     form.append('file', blob, `${this.opts.sourceType}-chunk.wav`)
     form.append('model', this.config.model || 'whisper-large-v3')
@@ -525,22 +527,35 @@ class WhisperSingleEngine implements STTEngine {
       form.append('prompt', '以下是对话的转写文本。')
     }
 
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${this.config.apiKey}` },
-      body: form
-    })
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`)
+    const controller = new AbortController()
+    this.requests.add(controller)
+    const timeout = setTimeout(() => controller.abort(), 30_000)
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${this.config.apiKey}` },
+        body: form,
+        signal: controller.signal
+      })
+      if (!res.ok) throw httpAPIError(res.status, (await res.text()).slice(0, 1000), this.config.apiKey)
+      const data = (await res.json()) as { text?: string }
+      if (typeof data.text !== 'string') throw new Error('语音接口未返回 text，请核对语音模型及接口格式')
+      return data.text.trim()
+    } catch (error) {
+      const detail = (error as Error).name === 'AbortError'
+        ? '请求超过30秒或监听已停止'
+        : (error as Error).message
+      throw new Error(redactAPIError(`音频已采集，语音服务请求失败：${detail}。请检查 STT 服务、网络及代理设置`, this.config.apiKey))
+    } finally {
+      clearTimeout(timeout)
+      this.requests.delete(controller)
     }
-    const data = (await res.json()) as { text?: string }
-    return (data.text || '').trim()
   }
 
   stop(): void {
     this.listening = false
+    this.requests.forEach((request) => request.abort())
+    this.requests.clear()
     if (this.volumeInterval) {
       clearInterval(this.volumeInterval)
       this.volumeInterval = null

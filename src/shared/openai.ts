@@ -20,7 +20,7 @@ export function apiEndpoint(baseURL: string, resource: string): string {
 export function buildOpenAIRequest(
   config: LLMConfig,
   messages: OpenAIMessage[],
-  options: { stream?: boolean; jsonOutput?: boolean; maxTokens?: number; thinkingOverride?: 'enabled' | 'disabled' } = {}
+  options: { stream?: boolean; jsonOutput?: boolean; maxTokens?: number } = {}
 ): { url: string; body: Record<string, unknown> } {
   const responses = config.apiFormat === 'responses'
   const body: Record<string, unknown> = { model: config.model.trim(), stream: options.stream ?? true }
@@ -38,8 +38,8 @@ export function buildOpenAIRequest(
     if (options.jsonOutput) body.response_format = { type: 'json_object' }
   }
   // Parameters are opt-in: OpenAI-compatible services do not share every model capability.
-  if (config.thinking === 'enabled' || options.thinkingOverride === 'enabled') {
-    const effort = options.thinkingOverride === 'disabled' ? 'none' : config.reasoningEffort
+  if (config.thinking === 'enabled') {
+    const effort = config.reasoningEffort
     if (responses) body.reasoning = { effort }
     else body.reasoning_effort = effort
   }

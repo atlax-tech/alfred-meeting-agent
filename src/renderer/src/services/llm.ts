@@ -24,8 +24,6 @@ export interface StreamCallbacks {
 }
 
 export interface ChatOptions {
-  /** 强制覆盖思考模式(用于问题提取场景要关闭思考) */
-  thinkingOverride?: 'enabled' | 'disabled'
   /** 是否启用 JSON Output(response_format) */
   jsonOutput?: boolean
   /** 最终输出语言锁;仅答案生成场景使用 */
